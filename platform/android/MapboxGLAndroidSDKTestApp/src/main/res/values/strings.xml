@@ -30,6 +30,7 @@
     <string name="activity_offline">Offline Map Activity</string>
     <string name="activity_minmax_zoom">Min/Max Zoom Activity</string>
     <string name="activity_animated_marker">Animated Marker Activity</string>
+    <string name="activity_scroll_jank">Scroll Jank Activity</string>
 
     <string name="description_user_location_tracking">Tracks the location of the user</string>
     <string name="description_custom_layer">Add a custom layer, experimental feature</string>
@@ -56,6 +57,7 @@
     <string name="description_directions">Example with Directions API</string>
     <string name="description_geocoder">Example with Geocoder API</string>
     <string name="description_scroll_by">Example to scroll with pixels in x,y direction</string>
+    <string name="description_scroll_jank">Demonstration of jank during scrolling</string>
 
     <string name="category_marker">Marker</string>
     <string name="category_infowindow">InfoWindow</string>
@@ -63,6 +65,7 @@
     <string name="category_fragment">Fragment</string>
     <string name="category_api">API</string>
     <string name="category_other">Other</string>
+    <string name="category_performance">_Performance</string>
 
     <string name="action_visible_bounds_explanation">Center map around 2 markers</string>
     <string name="action_remove_polylines">Remove polylines</string>

@@ -26,6 +26,7 @@ import android.os.Bundle;
 import android.support.annotation.CallSuper;
 import android.support.annotation.FloatRange;
 import android.support.annotation.IntDef;
+import android.support.annotation.LayoutRes;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.annotation.UiThread;
@@ -44,6 +45,8 @@ import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewConfiguration;
@@ -175,15 +178,26 @@ public class MapView extends FrameLayout {
         mOnMapChangedListener = new CopyOnWriteArrayList<>();
         mMapboxMap = new MapboxMap(this);
         mIcons = new ArrayList<>();
-        View view = LayoutInflater.from(context).inflate(R.layout.mapview_internal, this);
+
+        @LayoutRes int layout = R.layout.mapview_internal;
+        if (options.getUseSurfaceView()) {
+            layout = R.layout.mapview_internal_surface_view;
+        }
+
+        View view = LayoutInflater.from(context).inflate(layout, this);
 
         if (!isInEditMode()) {
             setWillNotDraw(false);
         }
 
-        // Reference the TextureView
-        TextureView textureView = (TextureView) view.findViewById(R.id.textureView);
-        textureView.setSurfaceTextureListener(new SurfaceTextureListener());
+        if (options.getUseSurfaceView()) {
+            SurfaceView surfaceView = (SurfaceView) view.findViewById(R.id.surfaceView);
+            surfaceView.getHolder().addCallback(new CallbacksHandler());
+        } else {
+            // Reference the TextureView
+            TextureView textureView = (TextureView) view.findViewById(R.id.textureView);
+            textureView.setSurfaceTextureListener(new SurfaceTextureListener());
+        }
 
         // Check if we are in Android Studio UI editor to avoid error in layout preview
         if (isInEditMode()) {
@@ -1280,6 +1294,31 @@ public class MapView extends FrameLayout {
             for (InfoWindow infoWindow : mMapboxMap.getInfoWindows()) {
                 infoWindow.update();
             }
+        }
+    }
+
+    private class CallbacksHandler implements SurfaceHolder.Callback, SurfaceHolder.Callback2 {
+
+        @Override
+        public void surfaceCreated(SurfaceHolder holder) {
+            mNativeMapView.createSurface(holder.getSurface());
+        }
+
+        @Override
+        public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+            mNativeMapView.resizeFramebuffer(width, height);
+        }
+
+        @Override
+        public void surfaceDestroyed(SurfaceHolder holder) {
+            if (mNativeMapView != null) {
+                mNativeMapView.destroySurface();
+            }
+        }
+
+        @Override
+        public void surfaceRedrawNeeded(SurfaceHolder holder) {
+            mNativeMapView.update();
         }
     }
 

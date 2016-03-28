@@ -55,6 +55,8 @@ public class MapboxMapOptions implements Parcelable {
 
     private boolean locationEnabled;
 
+    private boolean useSurfaceView;
+
     private String style;
     private String accessToken;
 
@@ -90,6 +92,8 @@ public class MapboxMapOptions implements Parcelable {
         zoomGesturesEnabled = in.readByte() != 0;
 
         locationEnabled = in.readByte() != 0;
+
+        useSurfaceView = in.readByte() != 0;
 
         style = in.readString();
         accessToken = in.readString();
@@ -145,6 +149,8 @@ public class MapboxMapOptions implements Parcelable {
                     , (int) (typedArray.getDimension(R.styleable.MapView_attribution_margin_bottom, DIMENSION_SEVEN_DP) * screenDensity)});
 
             mapboxMapOptions.locationEnabled(typedArray.getBoolean(R.styleable.MapView_my_location_enabled, false));
+
+            mapboxMapOptions.useSurfaceView(typedArray.getBoolean(R.styleable.MapView_use_surface_view, false));
         } finally {
             typedArray.recycle();
         }
@@ -382,6 +388,11 @@ public class MapboxMapOptions implements Parcelable {
         return this;
     }
 
+    public MapboxMapOptions useSurfaceView(boolean useSurfaceView) {
+        this.useSurfaceView = useSurfaceView;
+        return this;
+    }
+
     /**
      * Get the current configured initial camera position for a map view.
      *
@@ -562,6 +573,10 @@ public class MapboxMapOptions implements Parcelable {
         return locationEnabled;
     }
 
+    public boolean getUseSurfaceView() {
+        return useSurfaceView;
+    }
+
     /**
      * Get the current configured debug state for a map view.
      *
@@ -614,6 +629,8 @@ public class MapboxMapOptions implements Parcelable {
         dest.writeByte((byte) (zoomGesturesEnabled ? 1 : 0));
 
         dest.writeByte((byte) (locationEnabled ? 1 : 0));
+
+        dest.writeByte((byte) (useSurfaceView ? 1 : 0));
 
         dest.writeString(style);
         dest.writeString(accessToken);
