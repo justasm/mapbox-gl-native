@@ -1052,8 +1052,6 @@ public class MapboxMap {
     public void setPadding(int left, int top, int right, int bottom) {
         mMapView.setContentPadding(left, top, right, bottom);
         mUiSettings.invalidate();
-
-        moveCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(mCameraPosition).build()));
     }
 
     /**
