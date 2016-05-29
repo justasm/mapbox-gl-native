@@ -1,5 +1,4 @@
-#ifndef MBGL_GEOMETRY_VAO
-#define MBGL_GEOMETRY_VAO
+#pragma once
 
 #include <mbgl/shader/shader.hpp>
 #include <mbgl/gl/gl.hpp>
@@ -25,7 +24,7 @@ public:
         if (bound_shader == 0) {
             vertexBuffer.bind(glObjectStore);
             shader.bind(offset);
-            if (vao) {
+            if (vao.created()) {
                 storeBinding(shader, vertexBuffer.getID(), 0, offset);
             }
         } else {
@@ -40,7 +39,7 @@ public:
             vertexBuffer.bind(glObjectStore);
             elementsBuffer.bind(glObjectStore);
             shader.bind(offset);
-            if (vao) {
+            if (vao.created()) {
                 storeBinding(shader, vertexBuffer.getID(), elementsBuffer.getID(), offset);
             }
         } else {
@@ -69,5 +68,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

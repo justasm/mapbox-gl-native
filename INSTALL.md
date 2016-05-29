@@ -13,15 +13,10 @@ depending on your operating system and what platform you want to develop for.
 
 ## 1: Getting the Source
 
-Mapbox GL Native uses git submodules, so you'll need to initialize and update
-them after cloning the source from Git.
+Clone the git repository:
 
     git clone https://github.com/mapbox/mapbox-gl-native.git
     cd mapbox-gl-native
-    git submodule init
-    git submodule update
-
-Default styles in the [Mapbox GL Style Spec format](https://github.com/mapbox/mapbox-gl-style-spec) are included at `./styles` as a submodule. See the [styles project](https://github.com/mapbox/mapbox-gl-styles) to report problems or to contribute to these styles.
 
 ## 2: Installing Dependencies
 
@@ -30,11 +25,10 @@ targets.
 
  - Modern C++ compiler that supports `-std=c++14`
    - clang++ 3.5 or later _or_
-   - g++-4.9 or later
+   - g++-5 or later
  - Python 2.x (for build only)
+ - [Node.js](https://nodejs.org/) (for build only)
  - [`pkg-config`](https://wiki.freedesktop.org/www/Software/pkg-config/) (for build only)
- - [`libtool`](https://www.gnu.org/software/libtool/) (for build only)
- - [`automake`](https://www.gnu.org/software/automake/) (for build only)
 
 Depending on your operating system and target, you'll need additional
 dependencies:
@@ -48,6 +42,7 @@ dependencies:
  - Apple Command Line Tools (available at [Apple Developer](https://developer.apple.com/downloads))
  - [Homebrew](http://brew.sh)
  - [Cask](http://caskroom.io/) (if building for Android)
+ - [xcpretty](https://github.com/supermarin/xcpretty) (`gem install xcpretty`)
 
 ## 3: Setting up a development environment & building
 
@@ -56,5 +51,6 @@ See the relevant SDK documentation for next steps:
 * [Mapbox Android SDK](platform/android/)
 * [Mapbox iOS SDK](platform/ios/)
 * [Mapbox OS X SDK](platform/osx/)
+* [Mapbox Qt SDK](platform/qt/)
 * [Mapbox GL Native on Linux](platform/linux/)
 * [node-mapbox-gl-native](platform/node/)

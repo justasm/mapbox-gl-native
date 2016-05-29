@@ -33,12 +33,12 @@ Resource Resource::spriteJSON(const std::string& base, float pixelRatio) {
     };
 }
 
-Resource Resource::glyphs(const std::string& urlTemplate, const std::string& fontStack, const std::pair<uint16_t, uint16_t>& glyphRange) {
+Resource Resource::glyphs(const std::string& urlTemplate, const FontStack& fontStack, const std::pair<uint16_t, uint16_t>& glyphRange) {
     return Resource {
         Resource::Kind::Glyphs,
         util::replaceTokens(urlTemplate, [&](const std::string& token) {
             if (token == "fontstack") {
-                return util::percentEncode(fontStack);
+                return util::percentEncode(fontStackToString(fontStack));
             } else if (token == "range") {
                 return util::toString(glyphRange.first) + "-" + util::toString(glyphRange.second);
             } else {
@@ -48,7 +48,12 @@ Resource Resource::glyphs(const std::string& urlTemplate, const std::string& fon
     };
 }
 
-Resource Resource::tile(const std::string& urlTemplate, float pixelRatio, int32_t x, int32_t y, int8_t z) {
+Resource Resource::tile(const std::string& urlTemplate,
+                        float pixelRatio,
+                        int32_t x,
+                        int32_t y,
+                        int8_t z,
+                        Necessity necessity) {
     bool supportsRatio = urlTemplate.find("{ratio}") != std::string::npos;
     return Resource {
         Resource::Kind::Tile,
@@ -76,7 +81,8 @@ Resource Resource::tile(const std::string& urlTemplate, float pixelRatio, int32_
             x,
             y,
             z
-        }
+        },
+        necessity
     };
 }
 

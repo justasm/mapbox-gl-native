@@ -5,7 +5,7 @@ import android.support.test.rule.ActivityTestRule;
 import android.support.test.runner.AndroidJUnit4;
 import android.test.suitebuilder.annotation.LargeTest;
 
-import com.mapbox.mapboxsdk.testapp.activity.MaxMinZoomActivity;
+import com.mapbox.mapboxsdk.testapp.activity.camera.MaxMinZoomActivity;
 import com.mapbox.mapboxsdk.testapp.R;
 
 import org.junit.Before;
@@ -32,6 +32,6 @@ public class MaxMinZoomActivityTest extends BaseTest {
 
     @Test
     public void testSanity() {
-        checkViewIsDisplayed(R.id.manualZoomMapView);
+        checkViewIsDisplayed(R.id.mapView);
     }
 }

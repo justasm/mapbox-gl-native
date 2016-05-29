@@ -1,6 +1,7 @@
 #include <mbgl/renderer/debug_bucket.hpp>
 #include <mbgl/renderer/painter.hpp>
 #include <mbgl/shader/plain_shader.hpp>
+#include <mbgl/util/string.hpp>
 
 #include <mbgl/gl/gl.hpp>
 
@@ -9,14 +10,21 @@
 
 using namespace mbgl;
 
-DebugBucket::DebugBucket(const TileID id, const TileData::State state_, optional<SystemTimePoint> modified_, optional<SystemTimePoint> expires_, MapDebugOptions debugMode_)
-    : state(state_),
+DebugBucket::DebugBucket(const OverscaledTileID& id,
+                         const bool renderable_,
+                         const bool complete_,
+                         optional<Timestamp> modified_,
+                         optional<Timestamp> expires_,
+                         MapDebugOptions debugMode_)
+    : renderable(renderable_),
+      complete(complete_),
       modified(std::move(modified_)),
       expires(std::move(expires_)),
       debugMode(debugMode_) {
     double baseline = 200;
     if (debugMode & MapDebugOptions::ParseStatus) {
-        const std::string text = std::string(id) + " - " + TileData::StateToString(state);
+        const std::string text = util::toString(id) + " - " +
+                                 (complete ? "complete" : renderable ? "renderable" : "pending");
         fontBuffer.addText(text.c_str(), 50, baseline, 5);
         baseline += 200;
     }
@@ -31,11 +39,15 @@ DebugBucket::DebugBucket(const TileID id, const TileData::State state_, optional
 }
 
 void DebugBucket::drawLines(PlainShader& shader, gl::GLObjectStore& glObjectStore) {
-    array.bind(shader, fontBuffer, BUFFER_OFFSET_0, glObjectStore);
-    MBGL_CHECK_ERROR(glDrawArrays(GL_LINES, 0, (GLsizei)(fontBuffer.index())));
+    if (!fontBuffer.empty()) {
+        array.bind(shader, fontBuffer, BUFFER_OFFSET_0, glObjectStore);
+        MBGL_CHECK_ERROR(glDrawArrays(GL_LINES, 0, (GLsizei)(fontBuffer.index())));
+    }
 }
 
 void DebugBucket::drawPoints(PlainShader& shader, gl::GLObjectStore& glObjectStore) {
-    array.bind(shader, fontBuffer, BUFFER_OFFSET_0, glObjectStore);
-    MBGL_CHECK_ERROR(glDrawArrays(GL_POINTS, 0, (GLsizei)(fontBuffer.index())));
+    if (!fontBuffer.empty()) {
+        array.bind(shader, fontBuffer, BUFFER_OFFSET_0, glObjectStore);
+        MBGL_CHECK_ERROR(glDrawArrays(GL_POINTS, 0, (GLsizei)(fontBuffer.index())));
+    }
 }

@@ -1,5 +1,4 @@
-#ifndef MBGL_SPRITE_STORE
-#define MBGL_SPRITE_STORE
+#pragma once
 
 #include <mbgl/sprite/sprite_image.hpp>
 #include <mbgl/util/noncopyable.hpp>
@@ -11,18 +10,11 @@
 namespace mbgl {
 
 class FileSource;
+class SpriteStoreObserver;
 
 class SpriteStore : private util::noncopyable {
 public:
     using Sprites = std::map<std::string, std::shared_ptr<const SpriteImage>>;
-
-    class Observer {
-    public:
-        virtual ~Observer() = default;
-
-        virtual void onSpriteLoaded() {};
-        virtual void onSpriteError(std::exception_ptr) {};
-    };
 
     SpriteStore(float pixelRatio);
     ~SpriteStore();
@@ -35,7 +27,7 @@ public:
 
     void dumpDebugLogs() const;
 
-    void setObserver(Observer* observer);
+    void setObserver(SpriteStoreObserver* observer);
 
     // Adds/replaces a Sprite image.
     void setSprite(const std::string&, std::shared_ptr<const SpriteImage> = nullptr);
@@ -63,8 +55,7 @@ private:
 
     bool loaded = false;
 
-    Observer nullObserver;
-    Observer* observer = &nullObserver;
+    SpriteStoreObserver* observer = nullptr;
 
     // Lock for sprites and dirty maps.
     std::mutex mutex;
@@ -77,5 +68,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

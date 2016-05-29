@@ -1,9 +1,8 @@
-#ifndef MBGL_UTIL_PROJECTION
-#define MBGL_UTIL_PROJECTION
+#pragma once
 
 #include <mbgl/util/constants.hpp>
 #include <mbgl/util/geo.hpp>
-#include <mbgl/util/math.hpp>
+#include <mbgl/math/clamp.hpp>
 
 #include <cmath>
 
@@ -42,5 +41,3 @@ public:
 };
 
 } // namespace mbgl
-
-#endif

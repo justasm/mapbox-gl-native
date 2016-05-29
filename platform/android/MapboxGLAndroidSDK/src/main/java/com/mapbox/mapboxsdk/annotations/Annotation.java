@@ -22,7 +22,7 @@ public abstract class Annotation implements Comparable<Annotation> {
      * Internal C++ id is stored as unsigned int.
      */
     private long id = -1; // -1 unless added to a MapView
-    private MapboxMap mapboxMap;
+    protected MapboxMap mapboxMap;
 
     protected Annotation() {
     }
@@ -75,19 +75,15 @@ public abstract class Annotation implements Comparable<Annotation> {
         } else if (id > annotation.getId()) {
             return -1;
         }
-
-        // Equal
         return 0;
     }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-
+        if (o == null || !(o instanceof Annotation)) return false;
         Annotation that = (Annotation) o;
-
-        return getId() == that.getId();
+        return id == that.getId();
     }
 
     @Override

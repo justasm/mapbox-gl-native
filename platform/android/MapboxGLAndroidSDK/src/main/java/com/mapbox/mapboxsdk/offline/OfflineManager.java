@@ -4,7 +4,8 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.support.annotation.NonNull;
-
+import android.util.Log;
+import com.mapbox.mapboxsdk.MapboxAccountManager;
 import java.io.File;
 
 /**
@@ -13,8 +14,18 @@ import java.io.File;
  */
 public class OfflineManager {
 
+    private final static String LOG_TAG = "OfflineManager";
+
+    //
+    // Static methods
+    //
+
+    static {
+        System.loadLibrary("mapbox-gl");
+    }
+
     // Default database name
-    private final static String OFFLINE_DATABASE_NAME = "mbgl-offline.db";
+    private final static String DATABASE_NAME = "mbgl-offline.db";
 
     /*
      * The maximumCacheSize parameter is a limit applied to non-offline resources only,
@@ -78,8 +89,34 @@ public class OfflineManager {
     private OfflineManager(Context context) {
         // Get a pointer to the DefaultFileSource instance
         String assetRoot = context.getFilesDir().getAbsolutePath();
-        String cachePath = assetRoot  + File.separator + OFFLINE_DATABASE_NAME;
+        String cachePath = assetRoot  + File.separator + DATABASE_NAME;
         mDefaultFileSourcePtr = createDefaultFileSource(cachePath, assetRoot, DEFAULT_MAX_CACHE_SIZE);
+
+        if (MapboxAccountManager.getInstance() != null) {
+            setAccessToken(mDefaultFileSourcePtr, MapboxAccountManager.getInstance().getAccessToken());
+        }
+
+        // Delete any existing previous ambient cache database
+        deleteAmbientDatabase(context);
+    }
+
+    private void deleteAmbientDatabase(final Context context) {
+        // Delete the file in a separate thread to avoid affecting the UI
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String path = context.getCacheDir().getAbsolutePath() + File.separator + "mbgl-cache.db";
+                    File file = new File(path);
+                    if (file.exists()) {
+                        file.delete();
+                        Log.d(LOG_TAG, "Old ambient cache database deleted to save space: " + path);
+                    }
+                } catch (Exception e) {
+                    Log.e(LOG_TAG, "Failed to delete old ambient cache database: " + e.getMessage());
+                }
+            }
+        }).start();
     }
 
     public static synchronized OfflineManager getInstance(Context context) {
@@ -90,13 +127,24 @@ public class OfflineManager {
         return instance;
     }
 
-    /*
+    /**
      * Access token getter/setter
+     * @param accessToken
+     *
+     * @deprecated As of release 4.1.0, replaced by {@link MapboxAccountManager#start(Context, String)} ()}
      */
+    @Deprecated
     public void setAccessToken(String accessToken) {
         setAccessToken(mDefaultFileSourcePtr, accessToken);
     }
 
+    /**
+     * Get Access Token
+     * @return Access Token
+     *
+     * @deprecated As of release 4.1.0, replaced by {@link MapboxAccountManager#getAccessToken()}
+     */
+    @Deprecated
     public String getAccessToken() {
         return getAccessToken(mDefaultFileSourcePtr);
     }

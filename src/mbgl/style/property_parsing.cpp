@@ -1,17 +1,11 @@
 #include <mbgl/style/property_parsing.hpp>
-#include <mbgl/style/property_transition.hpp>
-#include <mbgl/style/function.hpp>
-
-#include <mbgl/platform/log.hpp>
 
 #include <csscolorparser/csscolorparser.hpp>
-
-#include <vector>
 
 namespace mbgl {
 
 template <>
-optional<bool> parseProperty(const char* name, const JSValue& value) {
+optional<bool> parseConstant(const char* name, const JSValue& value) {
     if (!value.IsBool()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a boolean", name);
         return {};
@@ -21,7 +15,7 @@ optional<bool> parseProperty(const char* name, const JSValue& value) {
 }
 
 template <>
-optional<float> parseProperty(const char* name, const JSValue& value) {
+optional<float> parseConstant(const char* name, const JSValue& value) {
     if (!value.IsNumber()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a number, or a number function", name);
         return {};
@@ -31,29 +25,7 @@ optional<float> parseProperty(const char* name, const JSValue& value) {
 }
 
 template <>
-optional<std::string> parseProperty(const char* name, const JSValue& value) {
-    if (std::string { "text-font" } == name) {
-        if (!value.IsArray()) {
-            Log::Warning(Event::ParseStyle, "value of '%s' must be an array of strings", name);
-            return {};
-        }
-
-        std::string result = "";
-        for (rapidjson::SizeType i = 0; i < value.Size(); ++i) {
-            const JSValue& stop = value[i];
-            if (stop.IsString()) {
-                result += stop.GetString();
-                if (i < value.Size()-1) {
-                    result += ",";
-                }
-            } else {
-                Log::Warning(Event::ParseStyle, "text-font members must be strings");
-                return {};
-            }
-        }
-        return result;
-    }
-
+optional<std::string> parseConstant(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
@@ -63,7 +35,7 @@ optional<std::string> parseProperty(const char* name, const JSValue& value) {
 }
 
 template <>
-optional<Color> parseProperty(const char* name, const JSValue& value) {
+optional<Color> parseConstant(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
@@ -80,8 +52,13 @@ optional<Color> parseProperty(const char* name, const JSValue& value) {
                   css_color.a}};
 }
 
+MBGL_DEFINE_ENUM_CLASS(TranslateAnchorTypeClass, TranslateAnchorType, {
+    { TranslateAnchorType::Map, "map" },
+    { TranslateAnchorType::Viewport, "viewport" },
+});
+
 template <>
-optional<TranslateAnchorType> parseProperty(const char* name, const JSValue& value) {
+optional<TranslateAnchorType> parseConstant(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
@@ -90,8 +67,13 @@ optional<TranslateAnchorType> parseProperty(const char* name, const JSValue& val
     return { TranslateAnchorTypeClass({ value.GetString(), value.GetStringLength() }) };
 }
 
+MBGL_DEFINE_ENUM_CLASS(RotateAnchorTypeClass, RotateAnchorType, {
+    { RotateAnchorType::Map, "map" },
+    { RotateAnchorType::Viewport, "viewport" },
+});
+
 template <>
-optional<RotateAnchorType> parseProperty<RotateAnchorType>(const char* name, const JSValue& value) {
+optional<RotateAnchorType> parseConstant<RotateAnchorType>(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
@@ -100,38 +82,69 @@ optional<RotateAnchorType> parseProperty<RotateAnchorType>(const char* name, con
     return { RotateAnchorTypeClass({ value.GetString(), value.GetStringLength() }) };
 }
 
+MBGL_DEFINE_ENUM_CLASS(LineCapTypeClass, LineCapType, {
+    { LineCapType::Round, "round" },
+    { LineCapType::Butt, "butt" },
+    { LineCapType::Square, "square" },
+});
+
 template <>
-optional<CapType> parseProperty<CapType>(const char* name, const JSValue& value) {
+optional<LineCapType> parseConstant<LineCapType>(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
     }
 
-    return { CapTypeClass({ value.GetString(), value.GetStringLength() }) };
+    return { LineCapTypeClass({ value.GetString(), value.GetStringLength() }) };
 }
 
+MBGL_DEFINE_ENUM_CLASS(LineJoinTypeClass, LineJoinType, {
+    { LineJoinType::Miter, "miter" },
+    { LineJoinType::Bevel, "bevel" },
+    { LineJoinType::Round, "round" },
+    { LineJoinType::FakeRound, "fakeround" },
+    { LineJoinType::FlipBevel, "flipbevel" },
+});
+
 template <>
-optional<JoinType> parseProperty<JoinType>(const char* name, const JSValue& value) {
+optional<LineJoinType> parseConstant<LineJoinType>(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
     }
 
-    return { JoinTypeClass({ value.GetString(), value.GetStringLength() }) };
+    return { LineJoinTypeClass({ value.GetString(), value.GetStringLength() }) };
 }
 
+MBGL_DEFINE_ENUM_CLASS(SymbolPlacementTypeClass, SymbolPlacementType, {
+    { SymbolPlacementType::Point, "point" },
+    { SymbolPlacementType::Line, "line" },
+});
+
 template <>
-optional<PlacementType> parseProperty<PlacementType>(const char* name, const JSValue& value) {
+optional<SymbolPlacementType> parseConstant<SymbolPlacementType>(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
     }
 
-    return { PlacementTypeClass({ value.GetString(), value.GetStringLength() }) };
+    return { SymbolPlacementTypeClass({ value.GetString(), value.GetStringLength() }) };
 }
 
+MBGL_DEFINE_ENUM_CLASS(TextAnchorTypeClass, TextAnchorType, {
+    { TextAnchorType::Center, "center" },
+    { TextAnchorType::Left, "left" },
+    { TextAnchorType::Right, "right" },
+    { TextAnchorType::Top, "top" },
+    { TextAnchorType::Bottom, "bottom" },
+    { TextAnchorType::TopLeft, "top-left" },
+    { TextAnchorType::TopRight, "top-right" },
+    { TextAnchorType::BottomLeft, "bottom-left" },
+    { TextAnchorType::BottomRight, "bottom-right" }
+});
+
 template <>
-optional<TextAnchorType> parseProperty<TextAnchorType>(const char* name, const JSValue& value) {
+optional<TextAnchorType> parseConstant<TextAnchorType>(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
@@ -140,8 +153,14 @@ optional<TextAnchorType> parseProperty<TextAnchorType>(const char* name, const J
     return { TextAnchorTypeClass({ value.GetString(), value.GetStringLength() }) };
 }
 
+MBGL_DEFINE_ENUM_CLASS(TextJustifyTypeClass, TextJustifyType, {
+    { TextJustifyType::Center, "center" },
+    { TextJustifyType::Left, "left" },
+    { TextJustifyType::Right, "right" },
+});
+
 template <>
-optional<TextJustifyType> parseProperty<TextJustifyType>(const char* name, const JSValue& value) {
+optional<TextJustifyType> parseConstant<TextJustifyType>(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
@@ -150,8 +169,14 @@ optional<TextJustifyType> parseProperty<TextJustifyType>(const char* name, const
     return { TextJustifyTypeClass({ value.GetString(), value.GetStringLength() }) };
 }
 
+MBGL_DEFINE_ENUM_CLASS(TextTransformTypeClass, TextTransformType, {
+    { TextTransformType::None, "none" },
+    { TextTransformType::Uppercase, "uppercase" },
+    { TextTransformType::Lowercase, "lowercase" },
+});
+
 template <>
-optional<TextTransformType> parseProperty<TextTransformType>(const char* name, const JSValue& value) {
+optional<TextTransformType> parseConstant<TextTransformType>(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
@@ -160,8 +185,13 @@ optional<TextTransformType> parseProperty<TextTransformType>(const char* name, c
     return { TextTransformTypeClass({ value.GetString(), value.GetStringLength() }) };
 }
 
+MBGL_DEFINE_ENUM_CLASS(RotationAlignmentTypeClass, RotationAlignmentType, {
+    { RotationAlignmentType::Map, "map" },
+    { RotationAlignmentType::Viewport, "viewport" },
+});
+
 template <>
-optional<RotationAlignmentType> parseProperty<RotationAlignmentType>(const char* name, const JSValue& value) {
+optional<RotationAlignmentType> parseConstant<RotationAlignmentType>(const char* name, const JSValue& value) {
     if (!value.IsString()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be a string", name);
         return {};
@@ -171,7 +201,7 @@ optional<RotationAlignmentType> parseProperty<RotationAlignmentType>(const char*
 }
 
 template <>
-optional<std::array<float, 2>> parseProperty(const char* name, const JSValue& value) {
+optional<std::array<float, 2>> parseConstant(const char* name, const JSValue& value) {
     if (value.IsArray() && value.Size() == 2 &&
             value[rapidjson::SizeType(0)].IsNumber() &&
             value[rapidjson::SizeType(1)].IsNumber()) {
@@ -186,7 +216,7 @@ optional<std::array<float, 2>> parseProperty(const char* name, const JSValue& va
 }
 
 template <>
-optional<std::vector<float>> parseProperty(const char* name, const JSValue& value) {
+optional<std::vector<float>> parseConstant(const char* name, const JSValue& value) {
     if (!value.IsArray()) {
         Log::Warning(Event::ParseStyle, "value of '%s' must be an array of numbers", name);
         return {};
@@ -209,199 +239,48 @@ optional<std::vector<float>> parseProperty(const char* name, const JSValue& valu
 }
 
 template <>
-optional<PropertyTransition> parseProperty(const char *, const JSValue& value) {
-    PropertyTransition transition;
-    if (value.IsObject()) {
-        bool parsed = false;
-        if (value.HasMember("duration") && value["duration"].IsNumber()) {
-            transition.duration.emplace(Milliseconds(value["duration"].GetUint()));
-            parsed = true;
-        }
-        if (value.HasMember("delay") && value["delay"].IsNumber()) {
-            transition.delay.emplace(Milliseconds(value["delay"].GetUint()));
-            parsed = true;
-        }
-        if (!parsed) {
-            return {};
-        }
-    }
-    return transition;
-}
-
-// --- Function ---
-
-template <typename T>
-optional<std::vector<std::pair<float, T>>> parseStops(const char* name, const JSValue& value) {
+optional<std::vector<std::string>> parseConstant(const char* name, const JSValue& value) {
     if (!value.IsArray()) {
-        Log::Warning(Event::ParseStyle, "stops function must specify a stops array");
+        Log::Warning(Event::ParseStyle, "value of '%s' must be an array of strings", name);
         return {};
     }
 
-    std::vector<std::pair<float, T>> stops;
+    std::vector<std::string> result;
 
     for (rapidjson::SizeType i = 0; i < value.Size(); ++i) {
-        const JSValue& stop = value[i];
+        const JSValue& part = value[i];
 
-        if (!stop.IsArray()) {
-            Log::Warning(Event::ParseStyle, "function argument must be a numeric value");
+        if (!part.IsString()) {
+            Log::Warning(Event::ParseStyle, "value of '%s' must be an array of strings", name);
             return {};
         }
 
-        if (stop.Size() != 2) {
-            Log::Warning(Event::ParseStyle, "stop must have zoom level and value specification");
-            return {};
-        }
-
-        const JSValue& z = stop[rapidjson::SizeType(0)];
-        if (!z.IsNumber()) {
-            Log::Warning(Event::ParseStyle, "zoom level in stop must be a number");
-            return {};
-        }
-
-        optional<T> v = parseProperty<T>(name, stop[rapidjson::SizeType(1)]);
-        if (!v) {
-            return {};
-        }
-
-        stops.emplace_back(z.GetDouble(), *v);
+        result.push_back({ part.GetString(), part.GetStringLength() });
     }
 
-    return stops;
+    return result;
 }
 
-template <typename T>
-optional<Function<T>> parseFunction(const char* name, const JSValue& value) {
+optional<PropertyTransition> parsePropertyTransition(const char *, const JSValue& value) {
     if (!value.IsObject()) {
-        auto constant = parseProperty<T>(name, value);
-        if (!constant) {
-            return {};
-        }
-        return { Function<T>(*constant) };
-    }
-
-    if (!value.HasMember("stops")) {
-        Log::Warning(Event::ParseStyle, "function must specify a function type");
         return {};
     }
 
-    float base = 1.0f;
-
-    if (value.HasMember("base")) {
-        const JSValue& value_base = value["base"];
-
-        if (!value_base.IsNumber()) {
-            Log::Warning(Event::ParseStyle, "base must be numeric");
-            return {};
-        }
-
-        base = value_base.GetDouble();
+    optional<Duration> duration;
+    if (value.HasMember("duration") && value["duration"].IsNumber()) {
+        duration.emplace(Milliseconds(value["duration"].GetUint()));
     }
 
-    auto stops = parseStops<T>(name, value["stops"]);
+    optional<Duration> delay;
+    if (value.HasMember("delay") && value["delay"].IsNumber()) {
+        delay.emplace(Milliseconds(value["delay"].GetUint()));
+    }
 
-    if (!stops) {
+    if (!duration && !delay) {
         return {};
     }
 
-    return { Function<T>(*stops, base) };
-}
-
-template <> optional<Function<std::array<float, 2>>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<std::array<float, 2>>(name, value);
-}
-
-template <> optional<Function<std::string>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<std::string>(name, value);
-}
-
-template <> optional<Function<TranslateAnchorType>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<TranslateAnchorType>(name, value);
-}
-
-template <> optional<Function<RotateAnchorType>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<RotateAnchorType>(name, value);
-}
-
-template <> optional<Function<CapType>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<CapType>(name, value);
-}
-
-template <> optional<Function<JoinType>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<JoinType>(name, value);
-}
-
-template <> optional<Function<PlacementType>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<PlacementType>(name, value);
-}
-
-template <> optional<Function<TextAnchorType>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<TextAnchorType>(name, value);
-}
-
-template <> optional<Function<TextJustifyType>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<TextJustifyType>(name, value);
-}
-
-template <> optional<Function<TextTransformType>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<TextTransformType>(name, value);
-}
-
-template <> optional<Function<RotationAlignmentType>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<RotationAlignmentType>(name, value);
-}
-
-template <> optional<Function<bool>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<bool>(name, value);
-}
-
-template<> optional<Function<float>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<float>(name, value);
-}
-
-template<> optional<Function<Color>> parseProperty(const char* name, const JSValue& value) {
-    return parseFunction<Color>(name, value);
-}
-
-template <typename T>
-optional<Function<Faded<T>>> parseFadedFunction(const JSValue& value) {
-    if (!value.HasMember("stops")) {
-        Log::Warning(Event::ParseStyle, "function must specify a function type");
-        return {};
-    }
-
-    auto stops = parseStops<T>("", value["stops"]);
-
-    if (!stops) {
-        return {};
-    }
-
-    return Function<Faded<T>>(*stops);
-}
-
-template <>
-optional<Function<Faded<std::vector<float>>>> parseProperty(const char* name, const JSValue& value) {
-    if (value.IsObject()) {
-        return parseFadedFunction<std::vector<float>>(value);
-    }
-
-    auto constant = parseProperty<std::vector<float>>(name, value);
-    if (!constant) {
-        return {};
-    }
-    return Function<Faded<std::vector<float>>>(*constant);
-}
-
-template <>
-optional<Function<Faded<std::string>>> parseProperty(const char* name, const JSValue& value) {
-    if (value.IsObject()) {
-        return parseFadedFunction<std::string>(value);
-    }
-
-    auto constant = parseProperty<std::string>(name, value);
-    if (!constant) {
-        return {};
-    }
-    return Function<Faded<std::string>>(*constant);
+    return PropertyTransition(duration, delay);
 }
 
 } // namespace mbgl

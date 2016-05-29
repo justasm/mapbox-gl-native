@@ -1,5 +1,4 @@
-#ifndef STYLE_UPDATE_PARAMETERS
-#define STYLE_UPDATE_PARAMETERS
+#pragma once
 
 #include <mbgl/map/mode.hpp>
 
@@ -8,9 +7,9 @@ namespace mbgl {
 class TransformState;
 class Worker;
 class FileSource;
-class MapData;
 class Style;
 namespace gl { class TexturePool; }
+class AnnotationManager;
 
 class StyleUpdateParameters {
 public:
@@ -23,7 +22,7 @@ public:
                           gl::TexturePool& texturePool_,
                           bool shouldReparsePartialTiles_,
                           const MapMode mode_,
-                          MapData& data_,
+                          AnnotationManager& annotationManager_,
                           Style& style_)
         : pixelRatio(pixelRatio_),
           debugOptions(debugOptions_),
@@ -34,7 +33,7 @@ public:
           texturePool(texturePool_),
           shouldReparsePartialTiles(shouldReparsePartialTiles_),
           mode(mode_),
-          data(data_),
+          annotationManager(annotationManager_),
           style(style_) {}
 
     float pixelRatio;
@@ -46,12 +45,10 @@ public:
     gl::TexturePool& texturePool;
     bool shouldReparsePartialTiles;
     const MapMode mode;
+    AnnotationManager& annotationManager;
 
     // TODO: remove
-    MapData& data;
     Style& style;
 };
 
 }
-
-#endif

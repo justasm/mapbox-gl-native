@@ -1,8 +1,7 @@
-#ifndef MBGL_ANNOTATION_GEOJSON_VT_TILE
-#define MBGL_ANNOTATION_GEOJSON_VT_TILE
+#pragma once
 
 #include <mbgl/tile/geometry_tile.hpp>
-#include <mbgl/map/tile_id.hpp>
+#include <mbgl/tile/tile_id.hpp>
 
 #include <unordered_map>
 
@@ -19,17 +18,16 @@ namespace mbgl {
 
 class GeoJSONTileFeature : public GeometryTileFeature {
 public:
-    using Tags = std::unordered_map<std::string, std::string>;
-
-    GeoJSONTileFeature(FeatureType, GeometryCollection&&, Tags&& = Tags{});
+    GeoJSONTileFeature(FeatureType, GeometryCollection&&, Feature::property_map&&);
     FeatureType getType() const override;
     optional<Value> getValue(const std::string&) const override;
+    Feature::property_map getProperties() const override { return properties; }
     GeometryCollection getGeometries() const override;
 
 private:
     const FeatureType type;
     const GeometryCollection geometries;
-    const Tags tags;
+    const Feature::property_map properties;
 };
 
 class GeoJSONTileLayer : public GeometryTileLayer {
@@ -39,6 +37,7 @@ public:
     GeoJSONTileLayer(Features&&);
     std::size_t featureCount() const override;
     util::ptr<const GeometryTileFeature> getFeature(std::size_t) const override;
+    std::string getName() const override { return ""; };
 
 private:
     const Features features;
@@ -55,7 +54,7 @@ private:
 
 class GeoJSONTileMonitor : public GeometryTileMonitor {
 public:
-    GeoJSONTileMonitor(mapbox::geojsonvt::GeoJSONVT*, const TileID&);
+    GeoJSONTileMonitor(mapbox::geojsonvt::GeoJSONVT*, const OverscaledTileID&);
     virtual ~GeoJSONTileMonitor();
 
     std::unique_ptr<AsyncRequest> monitorTile(const GeometryTileMonitor::Callback&) override;
@@ -66,7 +65,7 @@ private:
     void update();
 
 public:
-    const TileID tileID;
+    const OverscaledTileID tileID;
 
 private:
     mapbox::geojsonvt::GeoJSONVT* geojsonvt = nullptr;
@@ -74,5 +73,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

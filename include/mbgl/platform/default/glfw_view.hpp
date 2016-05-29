@@ -1,5 +1,4 @@
-#ifndef MBGL_COMMON_GLFW_VIEW
-#define MBGL_COMMON_GLFW_VIEW
+#pragma once
 
 #include <mbgl/mbgl.hpp>
 #include <mbgl/util/run_loop.hpp>
@@ -11,8 +10,6 @@
 #define GL_GLEXT_PROTOTYPES
 #include <GLFW/glfw3.h>
 
-#include <atomic>
-
 class GLFWView : public mbgl::View {
 public:
     GLFWView(bool fullscreen = false, bool benchmark = false);
@@ -22,13 +19,10 @@ public:
     std::array<uint16_t, 2> getSize() const override;
     std::array<uint16_t, 2> getFramebufferSize() const override;
 
-    void initialize(mbgl::Map *map) override;
+    void initialize(mbgl::Map*) override;
     void activate() override;
     void deactivate() override;
-    void notify() override;
     void invalidate() override;
-    void beforeRender() override;
-    void afterRender() override;
 
     static void onKey(GLFWwindow *window, int key, int scancode, int action, int mods);
     static void onScroll(GLFWwindow *window, double xoffset, double yoffset);
@@ -54,9 +48,6 @@ private:
     makeSpriteImage(int width, int height, float pixelRatio);
 
     void nextOrientation();
-    void toggleClipMasks();
-
-    void renderClipMasks();
 
     void addRandomPointAnnotations(int count);
     void addRandomShapeAnnotations(int count);
@@ -86,8 +77,6 @@ private:
     int fbHeight;
     float pixelRatio;
 
-    bool showClipMasks = false;
-
     double lastX = 0, lastY = 0;
 
     double lastClick = -1;
@@ -98,7 +87,5 @@ private:
     mbgl::util::Timer frameTick;
 
     GLFWwindow *window = nullptr;
-    std::atomic_flag clean = ATOMIC_FLAG_INIT;
+    bool dirty = false;
 };
-
-#endif

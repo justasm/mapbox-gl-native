@@ -11,24 +11,25 @@
 #include <mbgl/renderer/symbol_bucket.hpp>
 #include <mbgl/platform/log.hpp>
 #include <mbgl/util/constants.hpp>
+#include <mbgl/util/string.hpp>
 #include <mbgl/util/exception.hpp>
 #include <utility>
 
 using namespace mbgl;
 
-TileWorker::TileWorker(TileID id_,
+TileWorker::TileWorker(const OverscaledTileID& id_,
                        std::string sourceID_,
                        SpriteStore& spriteStore_,
                        GlyphAtlas& glyphAtlas_,
                        GlyphStore& glyphStore_,
-                       const std::atomic<TileData::State>& state_,
+                       const std::atomic<bool>& obsolete_,
                        const MapMode mode_)
     : id(id_),
       sourceID(std::move(sourceID_)),
       spriteStore(spriteStore_),
       glyphAtlas(glyphAtlas_),
       glyphStore(glyphStore_),
-      state(state_),
+      obsolete(obsolete_),
       mode(mode_) {
 }
 
@@ -37,12 +38,14 @@ TileWorker::~TileWorker() {
 }
 
 TileParseResult TileWorker::parseAllLayers(std::vector<std::unique_ptr<StyleLayer>> layers_,
-                                           std::unique_ptr<const GeometryTile> geometryTile,
+                                           std::unique_ptr<const GeometryTile> geometryTile_,
                                            PlacementConfig config) {
     // We're doing a fresh parse of the tile, because the underlying data has changed.
     pending.clear();
     placementPending.clear();
     partialParse = false;
+    featureIndex = std::make_unique<FeatureIndex>();
+    geometryTile = std::move(geometryTile_);
 
     // Store the layers for use in redoPlacement.
     layers = std::move(layers_);
@@ -55,17 +58,12 @@ TileParseResult TileWorker::parseAllLayers(std::vector<std::unique_ptr<StyleLaye
         const StyleLayer* layer = i->get();
         if (parsed.find(layer->bucketName()) == parsed.end()) {
             parsed.emplace(layer->bucketName());
-            parseLayer(layer, *geometryTile);
+            parseLayer(layer);
         }
+        featureIndex->addBucketLayerName(layer->bucketName(), layer->id);
     }
 
-    result.state = pending.empty() ? TileData::State::parsed : TileData::State::partial;
-
-    if (result.state == TileData::State::parsed) {
-        placeLayers(config);
-    }
-
-    return std::move(result);
+    return prepareResult(config);
 }
 
 TileParseResult TileWorker::parsePendingLayers(const PlacementConfig config) {
@@ -90,41 +88,50 @@ TileParseResult TileWorker::parsePendingLayers(const PlacementConfig config) {
         ++it;
     }
 
-    result.state = pending.empty() ? TileData::State::parsed : TileData::State::partial;
+    return prepareResult(config);
+}
 
-    if (result.state == TileData::State::parsed) {
-        placeLayers(config);
+TileParseResult TileWorker::prepareResult(const PlacementConfig& config) {
+    result.complete = pending.empty();
+
+    if (result.complete) {
+        featureIndex->setCollisionTile(placeLayers(config));
+        result.featureIndex = std::move(featureIndex);
+        result.geometryTile = std::move(geometryTile);
     }
 
     return std::move(result);
 }
 
-void TileWorker::placeLayers(const PlacementConfig config) {
-    redoPlacement(&placementPending, config);
+std::unique_ptr<CollisionTile> TileWorker::placeLayers(const PlacementConfig config) {
+    auto collisionTile = redoPlacement(&placementPending, config);
     for (auto &p : placementPending) {
         p.second->swapRenderData();
         insertBucket(p.first, std::move(p.second));
     }
     placementPending.clear();
+    return collisionTile;
 }
 
-void TileWorker::redoPlacement(
+std::unique_ptr<CollisionTile> TileWorker::redoPlacement(
     const std::unordered_map<std::string, std::unique_ptr<Bucket>>* buckets,
     PlacementConfig config) {
 
-    CollisionTile collisionTile(config);
+    auto collisionTile = std::make_unique<CollisionTile>(config);
 
     for (auto i = layers.rbegin(); i != layers.rend(); i++) {
         const auto it = buckets->find((*i)->id);
         if (it != buckets->end()) {
-            it->second->placeFeatures(collisionTile);
+            it->second->placeFeatures(*collisionTile);
         }
     }
+
+    return collisionTile;
 }
 
-void TileWorker::parseLayer(const StyleLayer* layer, const GeometryTile& geometryTile) {
+void TileWorker::parseLayer(const StyleLayer* layer) {
     // Cancel early when parsing.
-    if (state == TileData::State::obsolete)
+    if (obsolete)
         return;
 
     // Background and custom layers are special cases.
@@ -133,30 +140,31 @@ void TileWorker::parseLayer(const StyleLayer* layer, const GeometryTile& geometr
 
     // Skip this bucket if we are to not render this
     if ((layer->source != sourceID) ||
-        (id.z < std::floor(layer->minZoom)) ||
-        (id.z >= std::ceil(layer->maxZoom)) ||
+        (id.overscaledZ < std::floor(layer->minZoom)) ||
+        (id.overscaledZ >= std::ceil(layer->maxZoom)) ||
         (layer->visibility == VisibilityType::None)) {
         return;
     }
 
-    auto geometryLayer = geometryTile.getLayer(layer->sourceLayer);
+    auto geometryLayer = geometryTile->getLayer(layer->sourceLayer);
     if (!geometryLayer) {
         // The layer specified in the bucket does not exist. Do nothing.
         if (debug::tileParseWarnings) {
-            Log::Warning(Event::ParseTile, "layer '%s' does not exist in tile %d/%d/%d",
-                    layer->sourceLayer.c_str(), id.z, id.x, id.y);
+            Log::Warning(Event::ParseTile, "layer '%s' does not exist in tile %s",
+                    layer->sourceLayer.c_str(), util::toString(id).c_str());
         }
         return;
     }
 
     StyleBucketParameters parameters(id,
                                      *geometryLayer,
-                                     state,
+                                     obsolete,
                                      reinterpret_cast<uintptr_t>(this),
                                      partialParse,
                                      spriteStore,
                                      glyphAtlas,
                                      glyphStore,
+                                     *featureIndex,
                                      mode);
 
     std::unique_ptr<Bucket> bucket = layer->createBucket(parameters);

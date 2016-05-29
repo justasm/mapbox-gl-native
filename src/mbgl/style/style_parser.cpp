@@ -11,6 +11,7 @@
 #include <mapbox/geojsonvt.hpp>
 #include <mapbox/geojsonvt/convert.hpp>
 
+#include <mbgl/tile/geometry_tile.hpp>
 #include <mbgl/util/mapbox.hpp>
 
 #include <rapidjson/document.h>
@@ -203,6 +204,8 @@ void StyleParser::parseSources(const JSValue& value) {
             break;
 
         case SourceType::GeoJSON:
+            info = std::make_unique<SourceInfo>();
+
             // We should probably split this up to have URLs in the url property, and actual data
             // in the data property. Until then, we're going to detect the content based on the
             // object type.
@@ -213,8 +216,8 @@ void StyleParser::parseSources(const JSValue& value) {
                     url = { dataVal.GetString(), dataVal.GetStringLength() };
                 } else if (dataVal.IsObject()) {
                     // We need to parse dataVal as a GeoJSON object
-                    // TODO: parse GeoJSON data
                     geojsonvt = parseGeoJSON(dataVal);
+                    info->maxZoom = geojsonvt->options.maxZoom;
                 } else {
                     Log::Error(Event::ParseStyle, "GeoJSON data must be a URL or an object");
                     continue;
@@ -223,9 +226,6 @@ void StyleParser::parseSources(const JSValue& value) {
                 Log::Error(Event::ParseStyle, "GeoJSON source must have a data value");
                 continue;
             }
-
-            // We always assume the default configuration for GeoJSON sources.
-            info = std::make_unique<SourceInfo>();
 
             break;
 
@@ -245,13 +245,17 @@ void StyleParser::parseSources(const JSValue& value) {
 std::unique_ptr<mapbox::geojsonvt::GeoJSONVT> StyleParser::parseGeoJSON(const JSValue& value) {
     using namespace mapbox::geojsonvt;
 
+    Options options;
+    options.buffer = util::EXTENT / util::tileSize * 128;
+    options.extent = util::EXTENT;
+
     try {
-        return std::make_unique<GeoJSONVT>(Convert::convert(value, 0));
+        return std::make_unique<GeoJSONVT>(Convert::convert(value, 0), options);
     } catch (const std::exception& ex) {
         Log::Error(Event::ParseStyle, "Failed to parse GeoJSON data: %s", ex.what());
         // Create an empty GeoJSON VT object to make sure we're not infinitely waiting for
         // tiles to load.
-        return std::make_unique<GeoJSONVT>(std::vector<ProjectedFeature>{});
+        return std::make_unique<GeoJSONVT>(std::vector<ProjectedFeature>{}, options);
     }
 }
 
@@ -448,7 +452,7 @@ void StyleParser::parseLayer(const std::string& id, const JSValue& value, std::u
         }
 
         if (value.HasMember("filter")) {
-            layer->filter = parseFilterExpression(value["filter"]);
+            layer->filter = parseFilter(value["filter"]);
         }
 
         if (value.HasMember("minzoom")) {
@@ -478,6 +482,11 @@ void StyleParser::parseLayer(const std::string& id, const JSValue& value, std::u
     layer->parsePaints(value);
 }
 
+MBGL_DEFINE_ENUM_CLASS(VisibilityTypeClass, VisibilityType, {
+    { VisibilityType::Visible, "visible" },
+    { VisibilityType::None, "none" },
+});
+
 void StyleParser::parseVisibility(StyleLayer& layer, const JSValue& value) {
     if (!value.HasMember("visibility")) {
         return;
@@ -489,12 +498,178 @@ void StyleParser::parseVisibility(StyleLayer& layer, const JSValue& value) {
     layer.visibility = VisibilityTypeClass({ value["visibility"].GetString(), value["visibility"].GetStringLength() });
 }
 
-std::vector<std::string> StyleParser::fontStacks() const {
-    std::set<std::string> result;
+Value parseFeatureType(const Value& value) {
+    if (value == std::string("Point")) {
+        return Value(uint64_t(FeatureType::Point));
+    } else if (value == std::string("LineString")) {
+        return Value(uint64_t(FeatureType::LineString));
+    } else if (value == std::string("Polygon")) {
+        return Value(uint64_t(FeatureType::Polygon));
+    } else {
+        Log::Warning(Event::ParseStyle, "value for $type filter must be Point, LineString, or Polygon");
+        return Value(uint64_t(FeatureType::Unknown));
+    }
+}
+
+Value parseValue(const JSValue& value) {
+    switch (value.GetType()) {
+        case rapidjson::kNullType:
+        case rapidjson::kFalseType:
+            return false;
+
+        case rapidjson::kTrueType:
+            return true;
+
+        case rapidjson::kStringType:
+            return std::string { value.GetString(), value.GetStringLength() };
+
+        case rapidjson::kNumberType:
+            if (value.IsUint64()) return value.GetUint64();
+            if (value.IsInt64()) return value.GetInt64();
+            return value.GetDouble();
+
+        default:
+            return false;
+    }
+}
+
+template <class Expression>
+Filter parseUnaryFilter(const JSValue& value) {
+    Filter empty;
+
+    if (value.Size() < 2) {
+        Log::Warning(Event::ParseStyle, "filter expression must have 2 elements");
+        return empty;
+    }
+
+    if (!value[1u].IsString()) {
+        Log::Warning(Event::ParseStyle, "filter expression key must be a string");
+        return empty;
+    }
+
+    Expression expression;
+    expression.key = { value[1u].GetString(), value[1u].GetStringLength() };
+    return expression;
+}
+
+template <class Expression>
+Filter parseBinaryFilter(const JSValue& value) {
+    Filter empty;
+
+    if (value.Size() < 3) {
+        Log::Warning(Event::ParseStyle, "filter expression must have 3 elements");
+        return empty;
+    }
+
+    if (!value[1u].IsString()) {
+        Log::Warning(Event::ParseStyle, "filter expression key must be a string");
+        return empty;
+    }
+
+    Expression expression;
+    expression.key = { value[1u].GetString(), value[1u].GetStringLength() };
+    expression.value = parseValue(value[2u]);
+
+    if (expression.key == "$type") {
+        expression.value = parseFeatureType(expression.value);
+    }
+
+    return expression;
+}
+
+template <class Expression>
+Filter parseSetFilter(const JSValue& value) {
+    Filter empty;
+
+    if (value.Size() < 2) {
+        Log::Warning(Event::ParseStyle, "filter expression must at least 2 elements");
+        return empty;
+    }
+
+    if (!value[1u].IsString()) {
+        Log::Warning(Event::ParseStyle, "filter expression key must be a string");
+        return empty;
+    }
+
+    Expression expression;
+    expression.key = { value[1u].GetString(), value[1u].GetStringLength() };
+    for (rapidjson::SizeType i = 2; i < value.Size(); ++i) {
+        Value parsedValue = parseValue(value[i]);
+        if (expression.key == "$type") {
+            parsedValue = parseFeatureType(parsedValue);
+        }
+        expression.values.push_back(parsedValue);
+    }
+    return expression;
+}
+
+template <class Expression>
+Filter parseCompoundFilter(const JSValue& value) {
+    Expression expression;
+    for (rapidjson::SizeType i = 1; i < value.Size(); ++i) {
+        expression.filters.push_back(parseFilter(value[i]));
+    }
+    return expression;
+}
+
+Filter parseFilter(const JSValue& value) {
+    Filter empty;
+
+    if (!value.IsArray()) {
+        Log::Warning(Event::ParseStyle, "filter expression must be an array");
+        return empty;
+    }
+
+    if (value.Size() < 1) {
+        Log::Warning(Event::ParseStyle, "filter expression must have at least 1 element");
+        return empty;
+    }
+
+    if (!value[0u].IsString()) {
+        Log::Warning(Event::ParseStyle, "filter operator must be a string");
+        return empty;
+    }
+
+    std::string op = { value[0u].GetString(), value[0u].GetStringLength() };
+
+    if (op == "==") {
+        return parseBinaryFilter<EqualsFilter>(value);
+    } else if (op == "!=") {
+        return parseBinaryFilter<NotEqualsFilter>(value);
+    } else if (op == ">") {
+        return parseBinaryFilter<GreaterThanFilter>(value);
+    } else if (op == ">=") {
+        return parseBinaryFilter<GreaterThanEqualsFilter>(value);
+    } else if (op == "<") {
+        return parseBinaryFilter<LessThanFilter>(value);
+    } else if (op == "<=") {
+        return parseBinaryFilter<LessThanEqualsFilter>(value);
+    } else if (op == "in") {
+        return parseSetFilter<InFilter>(value);
+    } else if (op == "!in") {
+        return parseSetFilter<NotInFilter>(value);
+    } else if (op == "all") {
+        return parseCompoundFilter<AllFilter>(value);
+    } else if (op == "any") {
+        return parseCompoundFilter<AnyFilter>(value);
+    } else if (op == "none") {
+        return parseCompoundFilter<NoneFilter>(value);
+    } else if (op == "has") {
+        return parseUnaryFilter<HasFilter>(value);
+    } else if (op == "!has") {
+       return parseUnaryFilter<NotHasFilter>(value);
+    } else {
+        Log::Warning(Event::ParseStyle, "filter operator must be one of \"==\", \"!=\", \">\", \">=\", \"<\", \"<=\", \"in\", \"!in\", \"all\", \"any\", \"none\", \"has\", or \"!has\"");
+        return empty;
+    }
+}
+
+std::vector<FontStack> StyleParser::fontStacks() const {
+    std::set<FontStack> result;
 
     for (const auto& layer : layers) {
         if (layer->is<SymbolLayer>()) {
-            LayoutProperty<std::string> property = layer->as<SymbolLayer>()->layout.text.font;
+            LayoutProperty<FontStack> property = layer->as<SymbolLayer>()->layout.textFont;
             if (property.parsedValue) {
                 for (const auto& stop : property.parsedValue->getStops()) {
                     result.insert(stop.second);
@@ -505,7 +680,7 @@ std::vector<std::string> StyleParser::fontStacks() const {
         }
     }
 
-    return std::vector<std::string>(result.begin(), result.end());
+    return std::vector<FontStack>(result.begin(), result.end());
 }
 
 } // namespace mbgl

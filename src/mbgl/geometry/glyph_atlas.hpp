@@ -1,5 +1,4 @@
-#ifndef MBGL_GEOMETRY_GLYPH_ATLAS
-#define MBGL_GEOMETRY_GLYPH_ATLAS
+#pragma once
 
 #include <mbgl/geometry/binpack.hpp>
 #include <mbgl/text/glyph_store.hpp>
@@ -9,7 +8,7 @@
 
 #include <string>
 #include <set>
-#include <map>
+#include <unordered_map>
 #include <mutex>
 #include <atomic>
 
@@ -22,8 +21,8 @@ public:
 
     void addGlyphs(uintptr_t tileUID,
                    const std::u32string& text,
-                   const std::string& stackName,
                    const FontStack&,
+                   const GlyphSet&,
                    GlyphPositions&);
     void removeGlyphs(uintptr_t tileUID);
 
@@ -46,17 +45,15 @@ private:
     };
 
     Rect<uint16_t> addGlyph(uintptr_t tileID,
-                            const std::string& stackName,
+                            const FontStack&,
                             const SDFGlyph&);
 
     std::mutex mtx;
     BinPack<uint16_t> bin;
-    std::map<std::string, std::map<uint32_t, GlyphValue>> index;
+    std::unordered_map<FontStack, std::map<uint32_t, GlyphValue>, FontStackHash> index;
     const std::unique_ptr<uint8_t[]> data;
     std::atomic<bool> dirty;
     gl::TextureHolder texture;
 };
 
 } // namespace mbgl
-
-#endif

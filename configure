@@ -2,9 +2,16 @@
 
 set -euo pipefail
 
-CONFIG_FILE=$1
+INPUT_FILE=$1
+OUTPUT_FILE=$2
+export MASON_PLATFORM=$3
+export MASON_PLATFORM_VERSION=${4:-}
 
-if [ -z ${CONFIG_FILE} ]; then
+if [ -z ${INPUT_FILE} ]; then
+    abort 'You need to specify an input path for the configure.sh file'
+fi
+
+if [ -z ${OUTPUT_FILE} ]; then
     abort 'You need to specify an output path for the configuration file'
 fi
 
@@ -16,12 +23,9 @@ function info { >&2 echo -e "\033[1m\033[33m$1\033[0m"; }
 function warn { >&2 echo -e "\033[1m\033[33m$1\033[0m"; }
 
 if [ -e "`pwd`/.git" ]; then
-    info "This build is within a git repository"
-    git submodule update --init
     export MASON_DIR="`pwd`/.mason"
     export PATH="${MASON_DIR}:${PATH}"
 else
-    info "This build is NOT within a git repository"
     which mason || abort "You must install mason to build mapbox-gl-native (https://github.com/mapbox/mason)"
     export MASON_DIR="$(dirname $(readlink $(which mason)))"
 fi
@@ -37,10 +41,14 @@ function print_flags {
         if [ ! -z ${!VERSION:-} ] ; then
             mason install ${NAME} ${!VERSION}
             for FLAGS in "$@" ; do
-                CONFIG+="    '${NAME}_${FLAGS}%': $(quote_flags $(mason ${FLAGS} ${NAME} ${!VERSION})),"$LN
+                flags=$(mason ${FLAGS} ${NAME} ${!VERSION}) || exit 1
+                CONFIG+="    '${NAME}_${FLAGS}%': $(quote_flags $flags),"$LN
             done
         else
             warn "* Not using ${NAME}"
+            for FLAGS in "$@" ; do
+                CONFIG+="    '${NAME}_${FLAGS}%': [],"$LN
+            done
         fi
     fi
 }
@@ -54,11 +62,12 @@ function print_opengl_flags {
     CONFIG+="    'opengl_ldflags%': [],"$LN
 }
 
+function print_qt_flags {
+    :
+}
+
 # Load dependencies
-source platform/${MASON_PLATFORM}/scripts/configure.sh
-if [ -e platform/${MASON_PLATFORM}/scripts/${MASON_PLATFORM_VERSION}/configure.sh ]; then
-    source platform/${MASON_PLATFORM}/scripts/${MASON_PLATFORM_VERSION}/configure.sh
-fi
+source ${INPUT_FILE}
 
 PYTHON=`which python || abort 'Cannot find python'`
 
@@ -88,7 +97,9 @@ CONFIG+="  },"$LN
 CONFIG+="  'variables': {"$LN
 
 print_opengl_flags
+print_qt_flags
 
+print_flags protozero cflags
 print_flags boost cflags
 print_flags boost_libprogram_options static_libs
 print_flags openssl static_libs cflags ldflags
@@ -101,6 +112,7 @@ print_flags libuv static_libs cflags ldflags
 print_flags zlib static_libs cflags ldflags
 print_flags nunicode static_libs cflags ldflags
 print_flags libzip static_libs cflags ldflags
+print_flags geometry static_libs cflags ldflags
 print_flags geojsonvt static_libs cflags ldflags
 print_flags variant static_libs cflags ldflags
 print_flags rapidjson static_libs cflags ldflags
@@ -113,6 +125,6 @@ CONFIG+="  }
 }
 "
 
-mkdir -p $(dirname "${CONFIG_FILE}")
-echo "${CONFIG}" > ${CONFIG_FILE}
-cat ${CONFIG_FILE}
+mkdir -p $(dirname "${OUTPUT_FILE}")
+echo "${CONFIG}" > ${OUTPUT_FILE}
+cat ${OUTPUT_FILE}

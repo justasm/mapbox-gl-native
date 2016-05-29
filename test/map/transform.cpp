@@ -1,5 +1,4 @@
 #include <mbgl/test/util.hpp>
-#include <mbgl/test/mock_view.hpp>
 
 #include <mbgl/map/transform.hpp>
 #include <mbgl/util/geo.hpp>
@@ -7,8 +6,7 @@
 using namespace mbgl;
 
 TEST(Transform, InvalidScale) {
-    MockView view;
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
 
     ASSERT_DOUBLE_EQ(0, transform.getLatLng().latitude);
     ASSERT_DOUBLE_EQ(0, transform.getLatLng().longitude);
@@ -47,8 +45,7 @@ TEST(Transform, InvalidScale) {
 }
 
 TEST(Transform, InvalidLatLng) {
-    MockView view;
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
 
     ASSERT_DOUBLE_EQ(0, transform.getLatLng().latitude);
     ASSERT_DOUBLE_EQ(0, transform.getLatLng().longitude);
@@ -79,15 +76,11 @@ TEST(Transform, InvalidLatLng) {
     ASSERT_DOUBLE_EQ(10, transform.getLatLng().latitude);
     ASSERT_DOUBLE_EQ(8, transform.getLatLng().longitude);
     ASSERT_DOUBLE_EQ(4, transform.getScale());
-
-    ASSERT_FALSE(transform.latLngToScreenCoordinate(LatLng::null()));
-    ASSERT_FALSE(transform.screenCoordinateToLatLng(ScreenCoordinate::null()));
 }
 
 
 TEST(Transform, InvalidBearing) {
-    MockView view;
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
 
     ASSERT_DOUBLE_EQ(0, transform.getLatLng().latitude);
     ASSERT_DOUBLE_EQ(0, transform.getLatLng().longitude);
@@ -111,10 +104,9 @@ TEST(Transform, InvalidBearing) {
 }
 
 TEST(Transform, PerspectiveProjection) {
-    MockView view;
     LatLng loc;
 
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
     transform.resize({{ 1000, 1000 }});
     transform.setScale(2 << 9);
     transform.setPitch(0.9);
@@ -144,8 +136,7 @@ TEST(Transform, PerspectiveProjection) {
 }
 
 TEST(Transform, UnwrappedLatLng) {
-    MockView view;
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
     transform.resize({{ 1000, 1000 }});
     transform.setScale(2 << 9);
     transform.setPitch(0.9);
@@ -175,10 +166,9 @@ TEST(Transform, UnwrappedLatLng) {
 }
 
 TEST(Transform, ConstrainHeightOnly) {
-    MockView view;
     LatLng loc;
 
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
     transform.resize({{ 1000, 1000 }});
     transform.setScale(std::pow(2, util::MAX_ZOOM));
 
@@ -194,10 +184,9 @@ TEST(Transform, ConstrainHeightOnly) {
 }
 
 TEST(Transform, ConstrainWidthAndHeight) {
-    MockView view;
     LatLng loc;
 
-    Transform transform(view, ConstrainMode::WidthAndHeight);
+    Transform transform(nullptr, ConstrainMode::WidthAndHeight);
     transform.resize({{ 1000, 1000 }});
     transform.setScale(std::pow(2, util::MAX_ZOOM));
 
@@ -213,8 +202,7 @@ TEST(Transform, ConstrainWidthAndHeight) {
 }
 
 TEST(Transform, Anchor) {
-    MockView view;
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
     transform.resize({{ 1000, 1000 }});
 
     const LatLng latLng { 10, -100 };
@@ -225,7 +213,7 @@ TEST(Transform, Anchor) {
     ASSERT_DOUBLE_EQ(10, transform.getZoom());
     ASSERT_DOUBLE_EQ(0, transform.getAngle());
 
-    const ScreenCoordinate invalidAnchorPoint = ScreenCoordinate::null();
+    const optional<ScreenCoordinate> invalidAnchorPoint {};
     const ScreenCoordinate anchorPoint = { 150, 150 };
 
     const LatLng anchorLatLng = transform.getState().screenCoordinateToLatLng(anchorPoint);
@@ -314,8 +302,7 @@ TEST(Transform, Anchor) {
 }
 
 TEST(Transform, Padding) {
-    MockView view;
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
     transform.resize({{ 1000, 1000 }});
 
     ASSERT_DOUBLE_EQ(0, transform.getLatLng().latitude);
@@ -352,8 +339,7 @@ TEST(Transform, Padding) {
 }
 
 TEST(Transform, MoveBy) {
-    MockView view;
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
     transform.resize({{ 1000, 1000 }});
     transform.setLatLngZoom({ 0, 0 }, 10);
 
@@ -380,8 +366,7 @@ TEST(Transform, MoveBy) {
 }
 
 TEST(Transform, Antimeridian) {
-    MockView view;
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
     transform.resize({{ 1000, 1000 }});
     transform.setLatLngZoom({ 0, 0 }, 1);
 
@@ -424,8 +409,7 @@ TEST(Transform, Antimeridian) {
 }
 
 TEST(Transform, Camera) {
-    MockView view;
-    Transform transform(view, ConstrainMode::HeightOnly);
+    Transform transform;
     transform.resize({{ 1000, 1000 }});
 
     const LatLng latLng1 { 45, 135 };
@@ -489,4 +473,44 @@ TEST(Transform, Camera) {
     transform.updateTransitions(transform.getTransitionStart() + Milliseconds(750));
     transform.updateTransitions(transform.getTransitionStart() + transform.getTransitionDuration());
     ASSERT_FALSE(transform.inTransition());
+}
+
+TEST(Transform, DefaultTransform) {
+    Transform transform;
+    const TransformState& state = transform.getState();
+
+    LatLng nullIsland, latLng = {};
+    ScreenCoordinate center, point = {};
+    const uint16_t min = std::numeric_limits<uint16_t>::min();
+    const uint16_t max = std::numeric_limits<uint16_t>::max();
+
+    auto testConversions = [&](const LatLng& coord, const ScreenCoordinate& screenCoord) {
+        latLng = state.screenCoordinateToLatLng(center);
+        ASSERT_NEAR(latLng.latitude, coord.latitude, 0.000001);
+        ASSERT_NEAR(latLng.longitude, coord.longitude, 0.000001);
+        point = state.latLngToScreenCoordinate(nullIsland);
+        ASSERT_DOUBLE_EQ(point.x, screenCoord.x);
+        ASSERT_DOUBLE_EQ(point.y, screenCoord.y);
+    };
+
+    testConversions(nullIsland, center);
+
+    // Cannot assign the current size.
+    ASSERT_FALSE(transform.resize({{}}));
+
+    ASSERT_TRUE(transform.resize({{ min, max }}));
+    testConversions(nullIsland, center);
+
+    ASSERT_TRUE(transform.resize({{ max, min }}));
+    testConversions(nullIsland, center);
+
+    ASSERT_TRUE(transform.resize({{ min, min }}));
+    testConversions(nullIsland, center);
+
+    center = { max / 2., max / 2. };
+
+    // -1 evaluates to UINT_MAX.
+    ASSERT_TRUE(transform.resize({{ static_cast<uint16_t>(-1), static_cast<uint16_t>(-1) }}));
+    ASSERT_FALSE(transform.resize({{ max, max }}));
+    testConversions(nullIsland, center);
 }

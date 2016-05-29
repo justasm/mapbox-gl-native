@@ -2,7 +2,6 @@
 
 #import "AppDelegate.h"
 #import "DroppedPinAnnotation.h"
-#import "NSValue+Additions.h"
 
 #import <Mapbox/Mapbox.h>
 
@@ -14,6 +13,27 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     { .latitude = 12.9810816, .longitude = 77.6368034 },
     { .latitude = -13.15589555, .longitude = -74.2178961777998 },
 };
+
+NS_ARRAY_OF(id <MGLAnnotation>) *MBXFlattenedShapes(NS_ARRAY_OF(id <MGLAnnotation>) *shapes) {
+    NSMutableArray *flattenedShapes = [NSMutableArray arrayWithCapacity:shapes.count];
+    for (id <MGLAnnotation> shape in shapes) {
+        NSArray *subshapes;
+        if ([shape isKindOfClass:[MGLMultiPolyline class]]) {
+            subshapes = [(MGLMultiPolyline *)shape polylines];
+        } else if ([shape isKindOfClass:[MGLMultiPolygon class]]) {
+            subshapes = [(MGLMultiPolygon *)shape polygons];
+        } else if ([shape isKindOfClass:[MGLShapeCollection class]]) {
+            subshapes = MBXFlattenedShapes([(MGLShapeCollection *)shape shapes]);
+        }
+        
+        if (subshapes) {
+            [flattenedShapes addObjectsFromArray:subshapes];
+        } else {
+            [flattenedShapes addObject:shape];
+        }
+    }
+    return flattenedShapes;
+}
 
 @interface MapDocument () <NSWindowDelegate, NSSharingServicePickerDelegate, NSMenuDelegate, MGLMapViewDelegate>
 
@@ -121,22 +141,22 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     NSURL *styleURL;
     switch (tag) {
         case 1:
-            styleURL = [MGLStyle streetsStyleURL];
+            styleURL = [MGLStyle streetsStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 2:
-            styleURL = [MGLStyle emeraldStyleURL];
+            styleURL = [MGLStyle outdoorsStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 3:
-            styleURL = [MGLStyle lightStyleURL];
+            styleURL = [MGLStyle lightStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 4:
-            styleURL = [MGLStyle darkStyleURL];
+            styleURL = [MGLStyle darkStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 5:
-            styleURL = [MGLStyle satelliteStyleURL];
+            styleURL = [MGLStyle satelliteStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 6:
-            styleURL = [MGLStyle hybridStyleURL];
+            styleURL = [MGLStyle satelliteStreetsStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         default:
             NSAssert(NO, @"Cannot set style from control with tag %li", (long)tag);
@@ -204,13 +224,25 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         appDelegate.pendingZoomLevel = -1;
         appDelegate.pendingCamera = nil;
     }
+    if (!MGLCoordinateBoundsIsEmpty(appDelegate.pendingVisibleCoordinateBounds)) {
+        self.mapView.visibleCoordinateBounds = appDelegate.pendingVisibleCoordinateBounds;
+        appDelegate.pendingVisibleCoordinateBounds = (MGLCoordinateBounds){ { 0, 0 }, { 0, 0 } };
+    }
     if (appDelegate.pendingDebugMask) {
         self.mapView.debugMask = appDelegate.pendingDebugMask;
+    }
+    if (appDelegate.pendingMinimumZoomLevel >= 0) {
+        self.mapView.zoomLevel = MAX(appDelegate.pendingMinimumZoomLevel, self.mapView.zoomLevel);
+        appDelegate.pendingMaximumZoomLevel = -1;
+    }
+    if (appDelegate.pendingMaximumZoomLevel >= 0) {
+        self.mapView.zoomLevel = MIN(appDelegate.pendingMaximumZoomLevel, self.mapView.zoomLevel);
+        appDelegate.pendingMaximumZoomLevel = -1;
     }
     
     // Temporarily set the display name to the default center coordinate instead
     // of “Untitled” until the binding kicks in.
-    NSValue *coordinateValue = [NSValue valueWithCLLocationCoordinate2D:self.mapView.centerCoordinate];
+    NSValue *coordinateValue = [NSValue valueWithMGLCoordinate:self.mapView.centerCoordinate];
     self.displayName = [[NSValueTransformer valueTransformerForName:@"LocationCoordinate2DTransformer"]
                         transformedValue:coordinateValue];
 }
@@ -231,6 +263,18 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 
 - (IBAction)toggleCollisionBoxes:(id)sender {
     self.mapView.debugMask ^= MGLMapDebugCollisionBoxesMask;
+}
+
+- (IBAction)toggleWireframes:(id)sender {
+    self.mapView.debugMask ^= MGLMapDebugWireframesMask;
+}
+
+- (IBAction)showColorBuffer:(id)sender {
+    self.mapView.debugMask &= ~MGLMapDebugStencilBufferMask;
+}
+
+- (IBAction)showStencilBuffer:(id)sender {
+    self.mapView.debugMask |= MGLMapDebugStencilBufferMask;
 }
 
 - (IBAction)toggleShowsToolTipsOnDroppedPins:(id)sender {
@@ -350,6 +394,36 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     [self.mapView addAnnotation:line];
 }
 
+#pragma mark Offline packs
+
+- (IBAction)addOfflinePack:(id)sender {
+    NSAlert *namePrompt = [[NSAlert alloc] init];
+    namePrompt.messageText = @"Add offline pack";
+    namePrompt.informativeText = @"Choose a name for the pack:";
+    NSTextField *nameTextField = [[NSTextField alloc] initWithFrame:NSZeroRect];
+    nameTextField.placeholderString = MGLStringFromCoordinateBounds(self.mapView.visibleCoordinateBounds);
+    [nameTextField sizeToFit];
+    NSRect textFieldFrame = nameTextField.frame;
+    textFieldFrame.size.width = 300;
+    nameTextField.frame = textFieldFrame;
+    namePrompt.accessoryView = nameTextField;
+    [namePrompt addButtonWithTitle:@"Add"];
+    [namePrompt addButtonWithTitle:@"Cancel"];
+    if ([namePrompt runModal] != NSAlertFirstButtonReturn) {
+        return;
+    }
+    
+    id <MGLOfflineRegion> region = [[MGLTilePyramidOfflineRegion alloc] initWithStyleURL:self.mapView.styleURL bounds:self.mapView.visibleCoordinateBounds fromZoomLevel:self.mapView.zoomLevel toZoomLevel:self.mapView.maximumZoomLevel];
+    NSData *context = [[NSValueTransformer valueTransformerForName:@"OfflinePackNameValueTransformer"] reverseTransformedValue:nameTextField.stringValue];
+    [[MGLOfflineStorage sharedOfflineStorage] addPackForRegion:region withContext:context completionHandler:^(MGLOfflinePack * _Nullable pack, NSError * _Nullable error) {
+        if (error) {
+            [[NSAlert alertWithError:error] runModal];
+        } else {
+            [pack resume];
+        }
+    }];
+}
+
 #pragma mark Help methods
 
 - (IBAction)giveFeedback:(id)sender {
@@ -364,7 +438,11 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 - (void)handlePressGesture:(NSPressGestureRecognizer *)gestureRecognizer {
     if (gestureRecognizer.state == NSGestureRecognizerStateBegan) {
         NSPoint location = [gestureRecognizer locationInView:self.mapView];
-        [self dropPinAtPoint:location];
+        if (!NSPointInRect([gestureRecognizer locationInView:self.mapView.compass], self.mapView.compass.bounds)
+            && !NSPointInRect([gestureRecognizer locationInView:self.mapView.zoomControls], self.mapView.zoomControls.bounds)
+            && !NSPointInRect([gestureRecognizer locationInView:self.mapView.attributionView], self.mapView.attributionView.bounds)) {
+            [self dropPinAtPoint:location];
+        }
     }
 }
 
@@ -379,9 +457,17 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 }
 
 - (DroppedPinAnnotation *)pinAtPoint:(NSPoint)point {
+    NSArray *features = [self.mapView visibleFeaturesAtPoint:point];
+    NSString *title;
+    for (id <MGLFeature> feature in features) {
+        if (!title) {
+            title = [feature attributeForKey:@"name_en"] ?: [feature attributeForKey:@"name"];
+        }
+    }
+    
     DroppedPinAnnotation *annotation = [[DroppedPinAnnotation alloc] init];
     annotation.coordinate = [self.mapView convertPoint:point toCoordinateFromView:self.mapView];
-    annotation.title = @"Dropped Pin";
+    annotation.title = title ?: @"Dropped Pin";
     _spellOutNumberFormatter.numberStyle = NSNumberFormatterSpellOutStyle;
     if (_showsToolTipsOnDroppedPins) {
         NSString *formattedNumber = [_spellOutNumberFormatter stringFromNumber:@(++_droppedPinCounter)];
@@ -398,6 +484,16 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     [self.mapView removeAnnotation:[self.mapView annotationAtPoint:point]];
 }
 
+- (IBAction)selectFeatures:(id)sender {
+    [self selectFeaturesAtPoint:_mouseLocationForMapViewContextMenu];
+}
+
+- (void)selectFeaturesAtPoint:(NSPoint)point {
+    NSArray *features = [self.mapView visibleFeaturesAtPoint:point];
+    NSArray *flattenedFeatures = MBXFlattenedShapes(features);
+    [self.mapView addAnnotations:flattenedFeatures];
+}
+
 #pragma mark User interface validation
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
@@ -406,22 +502,22 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         NSCellStateValue state;
         switch (menuItem.tag) {
             case 1:
-                state = [styleURL isEqual:[MGLStyle streetsStyleURL]];
+                state = [styleURL isEqual:[MGLStyle streetsStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 2:
-                state = [styleURL isEqual:[MGLStyle emeraldStyleURL]];
+                state = [styleURL isEqual:[MGLStyle outdoorsStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 3:
-                state = [styleURL isEqual:[MGLStyle lightStyleURL]];
+                state = [styleURL isEqual:[MGLStyle lightStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 4:
-                state = [styleURL isEqual:[MGLStyle darkStyleURL]];
+                state = [styleURL isEqual:[MGLStyle darkStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 5:
-                state = [styleURL isEqual:[MGLStyle satelliteStyleURL]];
+                state = [styleURL isEqual:[MGLStyle satelliteStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 6:
-                state = [styleURL isEqual:[MGLStyle hybridStyleURL]];
+                state = [styleURL isEqual:[MGLStyle satelliteStreetsStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             default:
                 return NO;
@@ -446,13 +542,16 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         return YES;
     }
     if (menuItem.action == @selector(dropPin:)) {
-        BOOL isOverAnnotation = [self.mapView annotationAtPoint:_mouseLocationForMapViewContextMenu];
-        menuItem.hidden = isOverAnnotation;
+        id <MGLAnnotation> annotationUnderCursor = [self.mapView annotationAtPoint:_mouseLocationForMapViewContextMenu];
+        menuItem.hidden = annotationUnderCursor != nil;
         return YES;
     }
     if (menuItem.action == @selector(removePin:)) {
-        BOOL isOverAnnotation = [self.mapView annotationAtPoint:_mouseLocationForMapViewContextMenu];
-        menuItem.hidden = !isOverAnnotation;
+        id <MGLAnnotation> annotationUnderCursor = [self.mapView annotationAtPoint:_mouseLocationForMapViewContextMenu];
+        menuItem.hidden = annotationUnderCursor == nil;
+        return YES;
+    }
+    if (menuItem.action == @selector(selectFeatures:)) {
         return YES;
     }
     if (menuItem.action == @selector(toggleTileBoundaries:)) {
@@ -473,6 +572,21 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     if (menuItem.action == @selector(toggleCollisionBoxes:)) {
         BOOL isShown = self.mapView.debugMask & MGLMapDebugCollisionBoxesMask;
         menuItem.title = isShown ? @"Hide Collision Boxes" : @"Show Collision Boxes";
+        return YES;
+    }
+    if (menuItem.action == @selector(toggleWireframes:)) {
+        BOOL isShown = self.mapView.debugMask & MGLMapDebugWireframesMask;
+        menuItem.title = isShown ? @"Hide Wireframes" : @"Show Wireframes";
+        return YES;
+    }
+    if (menuItem.action == @selector(showColorBuffer:)) {
+        BOOL enabled = self.mapView.debugMask & MGLMapDebugStencilBufferMask;
+        menuItem.state = enabled ? NSOffState : NSOnState;
+        return YES;
+    }
+    if (menuItem.action == @selector(showStencilBuffer:)) {
+        BOOL enabled = self.mapView.debugMask & MGLMapDebugStencilBufferMask;
+        menuItem.state = enabled ? NSOnState : NSOffState;
         return YES;
     }
     if (menuItem.action == @selector(toggleShowsToolTipsOnDroppedPins:)) {
@@ -500,6 +614,10 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     if (menuItem.action == @selector(drawPolygonAndPolyLineAnnotations:)) {
         return !_isShowingPolygonAndPolylineAnnotations;
     }
+    if (menuItem.action == @selector(addOfflinePack:)) {
+        NSURL *styleURL = self.mapView.styleURL;
+        return !styleURL.isFileURL;
+    }
     if (menuItem.action == @selector(giveFeedback:)) {
         return YES;
     }
@@ -512,12 +630,12 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     }
     
     NSArray *styleURLs = @[
-        [MGLStyle streetsStyleURL],
-        [MGLStyle emeraldStyleURL],
-        [MGLStyle lightStyleURL],
-        [MGLStyle darkStyleURL],
-        [MGLStyle satelliteStyleURL],
-        [MGLStyle hybridStyleURL],
+        [MGLStyle streetsStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle outdoorsStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle lightStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle darkStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle satelliteStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle satelliteStreetsStyleURLWithVersion:MGLStyleDefaultVersion],
     ];
     return [styleURLs indexOfObject:self.mapView.styleURL];
 }
@@ -609,7 +727,7 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
             [NSCursor dragCopyCursor],
             [NSCursor contextualMenuCursor],
         ];
-        annotationImage.cursor = cursors[arc4random_uniform(cursors.count)];
+        annotationImage.cursor = cursors[arc4random_uniform((uint32_t)cursors.count) % cursors.count];
     } else {
         annotationImage.cursor = nil;
     }
@@ -628,6 +746,10 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         DroppedPinAnnotation *droppedPin = annotation;
         [droppedPin pause];
     }
+}
+
+- (CGFloat)mapView:(MGLMapView *)mapView alphaForShapeAnnotation:(MGLShape *)annotation {
+    return 0.8;
 }
 
 @end

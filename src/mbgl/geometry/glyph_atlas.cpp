@@ -1,12 +1,9 @@
 #include <mbgl/geometry/glyph_atlas.hpp>
 
-#include <mbgl/text/font_stack.hpp>
-
 #include <mbgl/gl/gl.hpp>
 #include <mbgl/gl/gl_object_store.hpp>
 #include <mbgl/platform/log.hpp>
 #include <mbgl/platform/platform.hpp>
-#include <mbgl/util/thread_context.hpp>
 
 #include <cassert>
 #include <algorithm>
@@ -23,18 +20,17 @@ GlyphAtlas::GlyphAtlas(uint16_t width_, uint16_t height_)
 }
 
 GlyphAtlas::~GlyphAtlas() {
-    assert(util::ThreadContext::currentlyOn(util::ThreadType::Map));
 }
 
 void GlyphAtlas::addGlyphs(uintptr_t tileUID,
                            const std::u32string& text,
-                           const std::string& stackName,
                            const FontStack& fontStack,
+                           const GlyphSet& glyphSet,
                            GlyphPositions& face)
 {
     std::lock_guard<std::mutex> lock(mtx);
 
-    const std::map<uint32_t, SDFGlyph>& sdfs = fontStack.getSDFs();
+    const std::map<uint32_t, SDFGlyph>& sdfs = glyphSet.getSDFs();
 
     for (uint32_t chr : text)
     {
@@ -44,19 +40,19 @@ void GlyphAtlas::addGlyphs(uintptr_t tileUID,
         }
 
         const SDFGlyph& sdf = sdf_it->second;
-        Rect<uint16_t> rect = addGlyph(tileUID, stackName, sdf);
+        Rect<uint16_t> rect = addGlyph(tileUID, fontStack, sdf);
         face.emplace(chr, Glyph{rect, sdf.metrics});
     }
 }
 
 Rect<uint16_t> GlyphAtlas::addGlyph(uintptr_t tileUID,
-                                    const std::string& stackName,
+                                    const FontStack& fontStack,
                                     const SDFGlyph& glyph)
 {
     // Use constant value for now.
     const uint8_t buffer = 3;
 
-    std::map<uint32_t, GlyphValue>& face = index[stackName];
+    std::map<uint32_t, GlyphValue>& face = index[fontStack];
     std::map<uint32_t, GlyphValue>::iterator it = face.find(glyph.id);
 
     // The glyph is already in this texture.
@@ -148,7 +144,7 @@ void GlyphAtlas::removeGlyphs(uintptr_t tileUID) {
 
 void GlyphAtlas::upload(gl::GLObjectStore& glObjectStore) {
     if (dirty) {
-        const bool first = !texture;
+        const bool first = !texture.created();
         bind(glObjectStore);
 
         std::lock_guard<std::mutex> lock(mtx);
@@ -188,7 +184,7 @@ void GlyphAtlas::upload(gl::GLObjectStore& glObjectStore) {
 }
 
 void GlyphAtlas::bind(gl::GLObjectStore& glObjectStore) {
-    if (!texture) {
+    if (!texture.created()) {
         texture.create(glObjectStore);
         MBGL_CHECK_ERROR(glBindTexture(GL_TEXTURE_2D, texture.getID()));
 #ifndef GL_ES_VERSION_2_0

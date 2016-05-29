@@ -64,6 +64,33 @@ TEST(AsyncTask, DestroyShouldNotRunQueue) {
     EXPECT_EQ(count, 0);
 }
 
+TEST(AsyncTask, DestroyAfterSignaling) {
+    RunLoop loop;
+
+    // We're creating two tasks and signal both of them; the one that gets fired first destroys
+    // the other one. Make sure that the second one we destroyed doesn't fire.
+
+    std::unique_ptr<AsyncTask> task1, task2;
+
+    task1 = std::make_unique<AsyncTask>([&] {
+        task2.reset();
+        if (!task1) {
+            FAIL() << "Task was destroyed but invoked anyway";
+        }
+    });
+    task2 = std::make_unique<AsyncTask>([&] {
+        task1.reset();
+        if (!task2) {
+            FAIL() << "Task was destroyed but invoked anyway";
+        }
+    });
+
+    task1->send();
+    task2->send();
+
+    loop.runOnce();
+}
+
 TEST(AsyncTask, RequestCoalescingMultithreaded) {
     RunLoop loop;
 
@@ -71,7 +98,7 @@ TEST(AsyncTask, RequestCoalescingMultithreaded) {
     AsyncTask async([&count] { ++count; });
 
     std::vector<std::unique_ptr<Thread<TestWorker>>> threads;
-    ThreadContext context = {"Test", ThreadType::Map, ThreadPriority::Regular};
+    ThreadContext context = {"Test"};
 
     unsigned numThreads = 25;
     for (unsigned i = 0; i < numThreads; ++i) {
@@ -106,7 +133,7 @@ TEST(AsyncTask, ThreadSafety) {
 
     std::vector<std::unique_ptr<Thread<TestWorker>>> threads;
     std::vector<std::unique_ptr<mbgl::AsyncRequest>> requests;
-    ThreadContext context = {"Test", ThreadType::Map, ThreadPriority::Regular};
+    ThreadContext context = {"Test"};
 
     for (unsigned i = 0; i < numThreads; ++i) {
         std::unique_ptr<Thread<TestWorker>> thread =
@@ -122,5 +149,5 @@ TEST(AsyncTask, ThreadSafety) {
 
     // We expect here more than 1 but 1 would also be
     // a valid result, although very unlikely (I hope).
-    EXPECT_GT(count, 1);
+    EXPECT_GT(count, 0);
 }

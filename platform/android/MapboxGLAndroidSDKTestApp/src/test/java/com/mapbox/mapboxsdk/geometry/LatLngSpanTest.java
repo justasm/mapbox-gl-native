@@ -1,6 +1,8 @@
 package com.mapbox.mapboxsdk.geometry;
 
-import com.mapbox.mapboxsdk.geometry.LatLngSpan;
+import android.os.Parcelable;
+
+import com.mapbox.mapboxsdk.utils.MockParcel;
 
 import org.junit.Test;
 
@@ -54,4 +56,10 @@ public class LatLngSpanTest {
         assertEquals("latitude in constructor", latLngSpan.getLongitudeSpan(), longitude, DELTA);
     }
 
+    @Test
+    public void testParcelable() {
+        LatLngSpan object = new LatLngSpan(1, 2);
+        Parcelable parcel = MockParcel.obtain(object);
+        assertEquals("parcel should match initial object", object, parcel);
+    }
 }

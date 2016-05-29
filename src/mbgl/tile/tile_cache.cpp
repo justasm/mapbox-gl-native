@@ -15,14 +15,15 @@ void TileCache::setSize(size_t size_) {
     }
 
     assert(orderedKeys.size() <= size);
-
-    tiles.reserve(size);
 }
 
-void TileCache::add(uint64_t key, std::shared_ptr<TileData> data) {
+void TileCache::add(const OverscaledTileID& key, std::unique_ptr<TileData> data) {
+    if (!data->isRenderable() || !size) {
+        return;
+    }
 
     // insert new or query existing data
-    if (tiles.emplace(key, data).second) {
+    if (tiles.emplace(key, std::move(data)).second) {
         // remove existing data key
         orderedKeys.remove(key);
     }
@@ -38,22 +39,22 @@ void TileCache::add(uint64_t key, std::shared_ptr<TileData> data) {
     assert(orderedKeys.size() <= size);
 };
 
-std::shared_ptr<TileData> TileCache::get(uint64_t key) {
+std::unique_ptr<TileData> TileCache::get(const OverscaledTileID& key) {
 
-    std::shared_ptr<TileData> data;
+    std::unique_ptr<TileData> data;
 
     auto it = tiles.find(key);
     if (it != tiles.end()) {
-        data = it->second;
+        data = std::move(it->second);
         tiles.erase(it);
         orderedKeys.remove(key);
-        assert(data->isReady());
+        assert(data->isRenderable());
     }
 
     return data;
 };
 
-bool TileCache::has(uint64_t key) {
+bool TileCache::has(const OverscaledTileID& key) {
     return tiles.find(key) != tiles.end();
 }
 

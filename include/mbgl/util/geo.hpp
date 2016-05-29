@@ -1,17 +1,23 @@
-#ifndef MBGL_UTIL_GEO
-#define MBGL_UTIL_GEO
+#pragma once
 
-#include <mbgl/util/math.hpp>
-#include <mbgl/util/vec.hpp>
+#include <mbgl/math/wrap.hpp>
 #include <mbgl/util/constants.hpp>
+
+#include <mapbox/geometry/point.hpp>
+#include <mapbox/geometry/point_arithmetic.hpp>
+#include <mapbox/geometry/line_string.hpp>
+#include <mapbox/geometry/box.hpp>
 
 #include <cmath>
 
 namespace mbgl {
 
-class TileID;
+class CanonicalTileID;
+class UnwrappedTileID;
 
-using ScreenCoordinate = vec2<double>;
+using ScreenCoordinate = mapbox::geometry::point<double>;
+using ScreenLineString = mapbox::geometry::line_string<double>;
+using ScreenBox        = mapbox::geometry::box<double>;
 
 class LatLng {
 public:
@@ -47,9 +53,8 @@ public:
     }
 
     // Constructs a LatLng object with the top left position of the specified tile.
-    LatLng(const TileID& id);
-
-    ScreenCoordinate project() const;
+    LatLng(const CanonicalTileID& id);
+    LatLng(const UnwrappedTileID& id);
 };
 
 inline bool operator==(const LatLng& a, const LatLng& b) {
@@ -100,7 +105,7 @@ public:
     }
 
     // Constructs a LatLngBounds object with the tile's exact boundaries.
-    LatLngBounds(const TileID&);
+    LatLngBounds(const CanonicalTileID&);
 
     double south() const { return sw.latitude; }
     double west()  const { return sw.longitude; }
@@ -167,19 +172,6 @@ inline bool operator!=(const LatLngBounds& a, const LatLngBounds& b) {
     return !(a == b);
 }
 
-class MetersBounds {
-public:
-    ProjectedMeters sw;
-    ProjectedMeters ne;
-
-    MetersBounds(const ProjectedMeters& sw_, const ProjectedMeters& ne_)
-        : sw(sw_), ne(ne_) {}
-
-    explicit operator bool() const {
-        return sw && ne;
-    }
-};
-
 // Determines the orientation of the map.
 enum class NorthOrientation : uint8_t {
     Upwards, // Default
@@ -223,5 +215,3 @@ public:
 };
 
 } // namespace mbgl
-
-#endif

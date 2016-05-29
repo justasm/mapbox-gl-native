@@ -1,9 +1,10 @@
 #import "MGLLocationManager.h"
 #import <UIKit/UIKit.h>
 
-static const NSTimeInterval fiveMinuteTimeInterval = 300.0;
-static const NSTimeInterval fiveSecondTimeInterval = 5.0;
-static const CLLocationDistance regionRadiusLocationDistance = 300.0;
+static const NSTimeInterval MGLLocationManagerHibernationTimeout = 300.0;
+static const NSTimeInterval MGLLocationManagerHibernationPollInterval = 5.0;
+static const CLLocationDistance MGLLocationManagerHibernationRadius = 300.0;
+static const CLLocationDistance MGLLocationManagerDistanceFilter = 5.0;
 static NSString * const MGLLocationManagerRegionIdentifier = @"MGLLocationManagerRegionIdentifier.fence.center";
 
 @interface MGLLocationManager ()
@@ -54,18 +55,22 @@ static NSString * const MGLLocationManagerRegionIdentifier = @"MGLLocationManage
         CLLocationManager *standardLocationManager = [[CLLocationManager alloc] init];
         standardLocationManager.delegate = self;
         standardLocationManager.desiredAccuracy = kCLLocationAccuracyThreeKilometers;
-        standardLocationManager.distanceFilter = 1;
+        standardLocationManager.distanceFilter = MGLLocationManagerDistanceFilter;
         self.standardLocationManager = standardLocationManager;
     }
 }
 
 - (void)startLocationServices {
-    if ([CLLocationManager authorizationStatus] == kCLAuthorizationStatusAuthorized ||
-        [CLLocationManager authorizationStatus] == kCLAuthorizationStatusAuthorizedWhenInUse) {
-       
+    CLAuthorizationStatus authorizationStatus = [CLLocationManager authorizationStatus];
+#if __IPHONE_OS_VERSION_MIN_REQUIRED >= 80000
+    BOOL authorizedAlways = authorizationStatus == kCLAuthorizationStatusAuthorizedAlways;
+#else
+    BOOL authorizedAlways = authorizationStatus == kCLAuthorizationStatusAuthorized;
+#endif
+    if (authorizedAlways || authorizationStatus == kCLAuthorizationStatusAuthorizedWhenInUse) {
         // If the host app can run in the background with `always` location permissions then allow background
         // updates and start the significant location change service and background timeout timer
-        if (self.hostAppHasBackgroundCapability && [CLLocationManager authorizationStatus] == kCLAuthorizationStatusAuthorized) {
+        if (self.hostAppHasBackgroundCapability && authorizedAlways) {
             [self.standardLocationManager startMonitoringSignificantLocationChanges];
             [self startBackgroundTimeoutTimer];
             // On iOS 9 and above also allow background location updates
@@ -105,12 +110,12 @@ static NSString * const MGLLocationManagerRegionIdentifier = @"MGLLocationManage
 
 - (void)startBackgroundTimeoutTimer {
     [self.backgroundLocationServiceTimeoutTimer invalidate];
-    self.backgroundLocationServiceTimeoutAllowedDate = [[NSDate date] dateByAddingTimeInterval:fiveMinuteTimeInterval];
-    self.backgroundLocationServiceTimeoutTimer = [NSTimer scheduledTimerWithTimeInterval:fiveSecondTimeInterval target:self selector:@selector(timeoutAllowedCheck) userInfo:nil repeats:YES];
+    self.backgroundLocationServiceTimeoutAllowedDate = [[NSDate date] dateByAddingTimeInterval:MGLLocationManagerHibernationTimeout];
+    self.backgroundLocationServiceTimeoutTimer = [NSTimer scheduledTimerWithTimeInterval:MGLLocationManagerHibernationPollInterval target:self selector:@selector(timeoutAllowedCheck) userInfo:nil repeats:YES];
 }
 
 - (void)establishRegionMonitoringForLocation:(CLLocation *)location {
-    CLCircularRegion *region = [[CLCircularRegion alloc] initWithCenter:location.coordinate radius:regionRadiusLocationDistance identifier:MGLLocationManagerRegionIdentifier];
+    CLCircularRegion *region = [[CLCircularRegion alloc] initWithCenter:location.coordinate radius:MGLLocationManagerHibernationRadius identifier:MGLLocationManagerRegionIdentifier];
     region.notifyOnEntry = NO;
     region.notifyOnExit = YES;
     [self.standardLocationManager startMonitoringForRegion:region];
@@ -120,7 +125,11 @@ static NSString * const MGLLocationManagerRegionIdentifier = @"MGLLocationManage
 
 - (void)locationManager:(CLLocationManager *)manager didChangeAuthorizationStatus:(CLAuthorizationStatus)status {
     switch (status) {
-        case kCLAuthorizationStatusAuthorized: // Also handles kCLAuthorizationStatusAuthorizedAlways
+#if __IPHONE_OS_VERSION_MIN_REQUIRED >= 80000
+        case kCLAuthorizationStatusAuthorizedAlways:
+#else
+        case kCLAuthorizationStatusAuthorized:
+#endif
         case kCLAuthorizationStatusAuthorizedWhenInUse:
             [self startUpdatingLocation];
             break;
@@ -135,7 +144,7 @@ static NSString * const MGLLocationManagerRegionIdentifier = @"MGLLocationManage
     if (location.speed > 0.0) {
         [self startBackgroundTimeoutTimer];
     }
-    if (self.standardLocationManager.monitoredRegions.count == 0 || location.horizontalAccuracy < regionRadiusLocationDistance) {
+    if (self.standardLocationManager.monitoredRegions.count == 0 || location.horizontalAccuracy < MGLLocationManagerHibernationRadius) {
         [self establishRegionMonitoringForLocation:location];
     }
     if ([self.delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {

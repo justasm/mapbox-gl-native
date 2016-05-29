@@ -1,12 +1,10 @@
-#ifndef MBGL_UTIL_UTF
-#define MBGL_UTIL_UTF
+#pragma once
 
 #include <memory>
 
 #include <boost/regex/pending/unicode_iterator.hpp>
 
 namespace mbgl {
-
 namespace util {
 
 class utf8_to_utf32 {
@@ -19,6 +17,5 @@ class utf8_to_utf32 {
     }
 };
 
-}}
-
-#endif
+} // namespace mbgl
+} // namespace util

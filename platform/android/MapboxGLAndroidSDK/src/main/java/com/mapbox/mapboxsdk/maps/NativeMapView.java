@@ -50,8 +50,13 @@ final class NativeMapView {
 
     public NativeMapView(MapView mapView) {
         Context context = mapView.getContext();
-        String cachePath = context.getCacheDir().getAbsolutePath();
         String dataPath = context.getFilesDir().getAbsolutePath();
+
+        // With the availability of offline, we're unifying the ambient (cache) and the offline
+        // databases to be in the same folder, outside cache, to avoid automatic deletion from
+        // the system
+        String cachePath = dataPath;
+
         float pixelRatio = context.getResources().getDisplayMetrics().density;
         String apkPath = context.getPackageCodePath();
         int availableProcessors = Runtime.getRuntime().availableProcessors();
@@ -114,24 +119,12 @@ final class NativeMapView {
         nativeDestroySurface(mNativeMapViewPtr);
     }
 
-    public void pause() {
-        nativePause(mNativeMapViewPtr);
-    }
-
-    public boolean isPaused() {
-        return nativeIsPaused(mNativeMapViewPtr);
-    }
-
-    public void resume() {
-        nativeResume(mNativeMapViewPtr);
-    }
-
     public void update() {
         nativeUpdate(mNativeMapViewPtr);
     }
 
-    public void renderSync() {
-        nativeRenderSync(mNativeMapViewPtr);
+    public void render() {
+        nativeRender(mNativeMapViewPtr);
     }
 
     public void resizeView(int width, int height) {
@@ -453,8 +446,8 @@ final class NativeMapView {
         nativeJumpTo(mNativeMapViewPtr, angle, center, pitch, zoom);
     }
 
-    public void easeTo(double angle, LatLng center, long duration, double pitch, double zoom) {
-        nativeEaseTo(mNativeMapViewPtr, angle, center, duration, pitch, zoom);
+    public void easeTo(double angle, LatLng center, long duration, double pitch, double zoom, boolean easingInterpolator) {
+        nativeEaseTo(mNativeMapViewPtr, angle, center, duration, pitch, zoom, easingInterpolator);
     }
 
     public void flyTo(double angle, LatLng center, long duration, double pitch, double zoom) {
@@ -510,15 +503,9 @@ final class NativeMapView {
 
     private native void nativeDestroySurface(long nativeMapViewPtr);
 
-    private native void nativePause(long nativeMapViewPtr);
-
-    private native boolean nativeIsPaused(long nativeMapViewPtr);
-
-    private native void nativeResume(long nativeMapViewPtr);
-
     private native void nativeUpdate(long nativeMapViewPtr);
 
-    private native void nativeRenderSync(long nativeMapViewPtr);
+    private native void nativeRender(long nativeMapViewPtr);
 
     private native void nativeViewResize(long nativeMapViewPtr, int width, int height);
 
@@ -654,7 +641,7 @@ final class NativeMapView {
 
     private native void nativeJumpTo(long nativeMapViewPtr, double angle, LatLng center, double pitch, double zoom);
 
-    private native void nativeEaseTo(long nativeMapViewPtr, double angle, LatLng center, long duration, double pitch, double zoom);
+    private native void nativeEaseTo(long nativeMapViewPtr, double angle, LatLng center, long duration, double pitch, double zoom, boolean easingInterpolator);
 
     private native void nativeFlyTo(long nativeMapViewPtr, double angle, LatLng center, long duration, double pitch, double zoom);
 

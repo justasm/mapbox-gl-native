@@ -1,5 +1,5 @@
 #include <mbgl/style/style.hpp>
-#include <mbgl/map/map_data.hpp>
+#include <mbgl/style/style_observer.hpp>
 #include <mbgl/source/source.hpp>
 #include <mbgl/tile/tile.hpp>
 #include <mbgl/map/transform_state.hpp>
@@ -20,12 +20,15 @@
 #include <mbgl/util/string.hpp>
 #include <mbgl/platform/log.hpp>
 #include <mbgl/layer/background_layer.hpp>
+#include <mbgl/math/minmax.hpp>
 
 #include <csscolorparser/csscolorparser.hpp>
 
 #include <algorithm>
 
 namespace mbgl {
+
+static StyleObserver nullObserver;
 
 bool Style::addClass(const std::string& className, const PropertyTransition& properties) {
     if (std::find(classes.begin(), classes.end(), className) != classes.end()) return false;
@@ -57,14 +60,14 @@ std::vector<std::string> Style::getClasses() const {
     return classes;
 }
 
-Style::Style(MapData& data_, FileSource& fileSource_)
-    : data(data_),
-      fileSource(fileSource_),
+Style::Style(FileSource& fileSource_, float pixelRatio)
+    : fileSource(fileSource_),
       glyphStore(std::make_unique<GlyphStore>(fileSource)),
       glyphAtlas(std::make_unique<GlyphAtlas>(1024, 1024)),
-      spriteStore(std::make_unique<SpriteStore>(data.pixelRatio)),
-      spriteAtlas(std::make_unique<SpriteAtlas>(1024, 1024, data.pixelRatio, *spriteStore)),
-      lineAtlas(std::make_unique<LineAtlas>(512, 512)),
+      spriteStore(std::make_unique<SpriteStore>(pixelRatio)),
+      spriteAtlas(std::make_unique<SpriteAtlas>(1024, 1024, pixelRatio, *spriteStore)),
+      lineAtlas(std::make_unique<LineAtlas>(256, 512)),
+      observer(&nullObserver),
       workers(4) {
     glyphStore->setObserver(this);
     spriteStore->setObserver(this);
@@ -147,20 +150,8 @@ void Style::removeLayer(const std::string& id) {
     layers.erase(it);
 }
 
-void Style::update(const TransformState& transform, const TimePoint& timePoint,
-                   gl::TexturePool& texturePool) {
+void Style::update(const StyleUpdateParameters& parameters) {
     bool allTilesUpdated = true;
-    StyleUpdateParameters parameters(data.pixelRatio,
-                                     data.getDebug(),
-                                     timePoint,
-                                     transform,
-                                     workers,
-                                     fileSource,
-                                     texturePool,
-                                     shouldReparsePartialTiles,
-                                     data.mode,
-                                     data,
-                                     *this);
 
     for (const auto& source : sources) {
         if (!source->update(parameters)) {
@@ -175,7 +166,7 @@ void Style::update(const TransformState& transform, const TimePoint& timePoint,
     }
 }
 
-void Style::cascade(const TimePoint& timePoint) {
+void Style::cascade(const TimePoint& timePoint, MapMode mode) {
     // When in continuous mode, we can either have user- or style-defined
     // transitions. Still mode is always immediate.
     static const PropertyTransition immediateTransition;
@@ -189,8 +180,8 @@ void Style::cascade(const TimePoint& timePoint) {
 
     const StyleCascadeParameters parameters {
         classIDs,
-        timePoint,
-        data.mode == MapMode::Continuous ? transitionProperties.value_or(immediateTransition) : immediateTransition
+        mode == MapMode::Continuous ? timePoint : Clock::time_point::max(),
+        mode == MapMode::Continuous ? transitionProperties.value_or(immediateTransition) : immediateTransition
     };
 
     transitionProperties = {};
@@ -200,7 +191,7 @@ void Style::cascade(const TimePoint& timePoint) {
     }
 }
 
-void Style::recalculate(float z, const TimePoint& timePoint) {
+void Style::recalculate(float z, const TimePoint& timePoint, MapMode mode) {
     for (const auto& source : sources) {
         source->enabled = false;
     }
@@ -209,9 +200,9 @@ void Style::recalculate(float z, const TimePoint& timePoint) {
 
     const StyleCalculationParameters parameters {
         z,
-        timePoint,
+        mode == MapMode::Continuous ? timePoint : Clock::time_point::max(),
         zoomHistory,
-        data.mode == MapMode::Continuous ? util::DEFAULT_FADE_DURATION : Duration::zero()
+        mode == MapMode::Continuous ? util::DEFAULT_FADE_DURATION : Duration::zero()
     };
 
     hasPendingTransitions = false;
@@ -270,13 +261,13 @@ RenderData Style::getRenderData() const {
             continue;
 
         if (const BackgroundLayer* background = layer->as<BackgroundLayer>()) {
-            if (layer.get() == layers[0].get() && background->paint.pattern.value.from.empty()) {
+            if (layer.get() == layers[0].get() && background->paint.backgroundPattern.value.from.empty()) {
                 // This is a solid background. We can use glClear().
-                result.backgroundColor = background->paint.color;
-                result.backgroundColor[0] *= background->paint.opacity;
-                result.backgroundColor[1] *= background->paint.opacity;
-                result.backgroundColor[2] *= background->paint.opacity;
-                result.backgroundColor[3] *= background->paint.opacity;
+                result.backgroundColor = background->paint.backgroundColor;
+                result.backgroundColor[0] *= background->paint.backgroundOpacity;
+                result.backgroundColor[1] *= background->paint.backgroundOpacity;
+                result.backgroundColor[2] *= background->paint.backgroundOpacity;
+                result.backgroundColor[3] *= background->paint.backgroundOpacity;
             } else {
                 // This is a textured background, or not the bottommost layer. We need to render it with a quad.
                 result.order.emplace_back(*layer);
@@ -295,9 +286,11 @@ RenderData Style::getRenderData() const {
             continue;
         }
 
-        for (auto tile : source->getTiles()) {
-            if (!tile->data || !tile->data->isReady())
+        for (auto& pair : source->getTiles()) {
+            auto& tile = pair.second;
+            if (!tile.data.isRenderable()) {
                 continue;
+            }
 
             // We're not clipping symbol layers, so when we have both parents and children of symbol
             // layers, we drop all children in favor of their parent to avoid duplicate labels.
@@ -308,7 +301,7 @@ RenderData Style::getRenderData() const {
                 // already a bucket from this layer that is a parent of this tile. Tiles are ordered
                 // by zoom level when we obtain them from getTiles().
                 for (auto it = result.order.rbegin(); it != result.order.rend() && (&it->layer == layer.get()); ++it) {
-                    if (tile->id.isChildOf(it->tile->id)) {
+                    if (tile.data.id.isChildOf(it->tile->data.id)) {
                         skip = true;
                         break;
                     }
@@ -318,15 +311,45 @@ RenderData Style::getRenderData() const {
                 }
             }
 
-            auto bucket = tile->data->getBucket(*layer);
+            auto bucket = tile.data.getBucket(*layer);
             if (bucket) {
-                result.order.emplace_back(*layer, tile, bucket);
+                result.order.emplace_back(*layer, &tile, bucket);
             }
         }
     }
 
     return result;
 }
+
+std::vector<Feature> Style::queryRenderedFeatures(const StyleQueryParameters& parameters) const {
+    std::unordered_map<std::string, std::vector<Feature>> resultsByLayer;
+
+    for (const auto& source : sources) {
+        auto sourceResults = source->queryRenderedFeatures(parameters);
+        std::move(sourceResults.begin(), sourceResults.end(), std::inserter(resultsByLayer, resultsByLayer.begin()));
+    }
+
+    std::vector<Feature> result;
+
+    // Combine all results based on the style layer order.
+    for (const auto& layer : layers) {
+        auto it = resultsByLayer.find(layer->id);
+        if (it != resultsByLayer.end()) {
+            std::move(it->second.begin(), it->second.end(), std::back_inserter(result));
+        }
+    }
+
+    return result;
+}
+
+float Style::getQueryRadius() const {
+    float additionalRadius = 0;
+    for (auto& layer : layers) {
+        additionalRadius = util::max(additionalRadius, layer->getQueryRadius());
+    }
+    return additionalRadius;
+}
+
 
 void Style::setSourceTileCacheSize(size_t size) {
     for (const auto& source : sources) {
@@ -340,21 +363,20 @@ void Style::onLowMemory() {
     }
 }
 
-void Style::setObserver(Observer* observer_) {
-    assert(util::ThreadContext::currentlyOn(util::ThreadType::Map));
+void Style::setObserver(StyleObserver* observer_) {
     observer = observer_;
 }
 
-void Style::onGlyphsLoaded(const std::string& fontStack, const GlyphRange& glyphRange) {
+void Style::onGlyphsLoaded(const FontStack& fontStack, const GlyphRange& glyphRange) {
     shouldReparsePartialTiles = true;
     observer->onGlyphsLoaded(fontStack, glyphRange);
     observer->onResourceLoaded();
 }
 
-void Style::onGlyphsError(const std::string& fontStack, const GlyphRange& glyphRange, std::exception_ptr error) {
+void Style::onGlyphsError(const FontStack& fontStack, const GlyphRange& glyphRange, std::exception_ptr error) {
     lastError = error;
     Log::Error(Event::Style, "Failed to load glyph range %d-%d for font stack %s: %s",
-               glyphRange.first, glyphRange.second, fontStack.c_str(), util::toString(error).c_str());
+               glyphRange.first, glyphRange.second, fontStackToString(fontStack).c_str(), util::toString(error).c_str());
     observer->onGlyphsError(fontStack, glyphRange, error);
     observer->onResourceError(error);
 }
@@ -372,7 +394,7 @@ void Style::onSourceError(Source& source, std::exception_ptr error) {
     observer->onResourceError(error);
 }
 
-void Style::onTileLoaded(Source& source, const TileID& tileID, bool isNewTile) {
+void Style::onTileLoaded(Source& source, const OverscaledTileID& tileID, bool isNewTile) {
     if (isNewTile) {
         shouldReparsePartialTiles = true;
     }
@@ -381,10 +403,10 @@ void Style::onTileLoaded(Source& source, const TileID& tileID, bool isNewTile) {
     observer->onResourceLoaded();
 }
 
-void Style::onTileError(Source& source, const TileID& tileID, std::exception_ptr error) {
+void Style::onTileError(Source& source, const OverscaledTileID& tileID, std::exception_ptr error) {
     lastError = error;
     Log::Error(Event::Style, "Failed to load tile %s for source %s: %s",
-               std::string(tileID).c_str(), source.id.c_str(), util::toString(error).c_str());
+               util::toString(tileID).c_str(), source.id.c_str(), util::toString(error).c_str());
     observer->onTileError(source, tileID, error);
     observer->onResourceError(error);
 }

@@ -1,27 +1,23 @@
-#ifndef MBGL_STYLE_TYPES
-#define MBGL_STYLE_TYPES
+#pragma once
 
 #include <mbgl/util/enum.hpp>
 
 #include <string>
 #include <array>
+#include <vector>
 
 namespace mbgl {
 
 // Stores a premultiplied color, with all four channels ranging from 0..1
-typedef std::array<float, 4> Color;
+using Color = std::array<float, 4>;
 
+// An array of font names
+using FontStack = std::vector<std::string>;
 
-template <typename T>
-struct Faded {
-    Faded() = default;
-    Faded(const T& v) : to(v) {}
+std::string fontStackToString(const FontStack&);
 
-    T from;
-    float fromScale = 0;
-    T to;
-    float toScale = 0;
-    float t = 0;
+struct FontStackHash {
+    std::size_t operator()(const FontStack&) const;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -49,28 +45,13 @@ enum class VisibilityType : bool {
     None,
 };
 
-MBGL_DEFINE_ENUM_CLASS(VisibilityTypeClass, VisibilityType, {
-    { VisibilityType::Visible, "visible" },
-    { VisibilityType::None, "none" },
-});
-
-// -------------------------------------------------------------------------------------------------
-
-enum class CapType : uint8_t {
+enum class LineCapType : uint8_t {
     Round,
     Butt,
     Square,
 };
 
-MBGL_DEFINE_ENUM_CLASS(CapTypeClass, CapType, {
-    { CapType::Round, "round" },
-    { CapType::Butt, "butt" },
-    { CapType::Square, "square" },
-});
-
-// -------------------------------------------------------------------------------------------------
-
-enum class JoinType : uint8_t {
+enum class LineJoinType : uint8_t {
     Miter,
     Bevel,
     Round,
@@ -79,77 +60,31 @@ enum class JoinType : uint8_t {
     FlipBevel
 };
 
-MBGL_DEFINE_ENUM_CLASS(JoinTypeClass, JoinType, {
-    { JoinType::Miter, "miter" },
-    { JoinType::Bevel, "bevel" },
-    { JoinType::Round, "round" },
-    { JoinType::FakeRound, "fakeround" },
-    { JoinType::FlipBevel, "flipbevel" },
-});
-
-// -------------------------------------------------------------------------------------------------
-
 enum class TranslateAnchorType : bool {
     Map,
     Viewport
 };
-
-MBGL_DEFINE_ENUM_CLASS(TranslateAnchorTypeClass, TranslateAnchorType, {
-    { TranslateAnchorType::Map, "map" },
-    { TranslateAnchorType::Viewport, "viewport" },
-});
-
-// -------------------------------------------------------------------------------------------------
 
 enum class RotateAnchorType : bool {
     Map,
     Viewport,
 };
 
-MBGL_DEFINE_ENUM_CLASS(RotateAnchorTypeClass, RotateAnchorType, {
-    { RotateAnchorType::Map, "map" },
-    { RotateAnchorType::Viewport, "viewport" },
-});
-
-// -------------------------------------------------------------------------------------------------
-
-enum class PlacementType : bool {
+enum class SymbolPlacementType : bool {
     Point,
     Line,
 };
-
-MBGL_DEFINE_ENUM_CLASS(PlacementTypeClass, PlacementType, {
-    { PlacementType::Point, "point" },
-    { PlacementType::Line, "line" },
-});
-
-// -------------------------------------------------------------------------------------------------
 
 enum class RotationAlignmentType : bool {
     Map,
     Viewport,
 };
 
-MBGL_DEFINE_ENUM_CLASS(RotationAlignmentTypeClass, RotationAlignmentType, {
-    { RotationAlignmentType::Map, "map" },
-    { RotationAlignmentType::Viewport, "viewport" },
-});
-
-// -------------------------------------------------------------------------------------------------
-
 enum class TextJustifyType : uint8_t {
     Center,
     Left,
     Right
 };
-
-MBGL_DEFINE_ENUM_CLASS(TextJustifyTypeClass, TextJustifyType, {
-    { TextJustifyType::Center, "center" },
-    { TextJustifyType::Left, "left" },
-    { TextJustifyType::Right, "right" },
-});
-
-// -------------------------------------------------------------------------------------------------
 
 enum class TextAnchorType : uint8_t {
     Center,
@@ -163,31 +98,11 @@ enum class TextAnchorType : uint8_t {
     BottomRight
 };
 
-MBGL_DEFINE_ENUM_CLASS(TextAnchorTypeClass, TextAnchorType, {
-    { TextAnchorType::Center, "center" },
-    { TextAnchorType::Left, "left" },
-    { TextAnchorType::Right, "right" },
-    { TextAnchorType::Top, "top" },
-    { TextAnchorType::Bottom, "bottom" },
-    { TextAnchorType::TopLeft, "top-left" },
-    { TextAnchorType::TopRight, "top-right" },
-    { TextAnchorType::BottomLeft, "bottom-left" },
-    { TextAnchorType::BottomRight, "bottom-right" }
-});
-
-// -------------------------------------------------------------------------------------------------
-
 enum class TextTransformType : uint8_t {
     None,
     Uppercase,
     Lowercase,
 };
-
-MBGL_DEFINE_ENUM_CLASS(TextTransformTypeClass, TextTransformType, {
-    { TextTransformType::None, "none" },
-    { TextTransformType::Uppercase, "uppercase" },
-    { TextTransformType::Lowercase, "lowercase" },
-});
 
 /**
  * Initialize any GL state needed by the custom layer. This method is called once, from the
@@ -229,6 +144,4 @@ using CustomLayerRenderFunction = void (*)(void* context, const CustomLayerRende
 using CustomLayerDeinitializeFunction = void (*)(void* context);
 
 } // namespace mbgl
-
-#endif
 

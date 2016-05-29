@@ -1,5 +1,4 @@
-#ifndef MBGL_LINE_LAYER
-#define MBGL_LINE_LAYER
+#pragma once
 
 #include <mbgl/style/style_layer.hpp>
 #include <mbgl/style/layout_property.hpp>
@@ -9,31 +8,24 @@ namespace mbgl {
 
 class LineLayoutProperties {
 public:
-    LayoutProperty<CapType> cap { CapType::Butt };
-    LayoutProperty<JoinType> join { JoinType::Miter };
-    LayoutProperty<float> miterLimit { 2.0f };
-    LayoutProperty<float> roundLimit { 1.0f };
+    LayoutProperty<LineCapType> lineCap { LineCapType::Butt };
+    LayoutProperty<LineJoinType> lineJoin { LineJoinType::Miter };
+    LayoutProperty<float> lineMiterLimit { 2.0f };
+    LayoutProperty<float> lineRoundLimit { 1.0f };
 };
 
 class LinePaintProperties {
 public:
-    PaintProperty<float> opacity { 1.0f };
-    PaintProperty<Color> color { {{ 0, 0, 0, 1 }} };
-    PaintProperty<std::array<float, 2>> translate { {{ 0, 0 }} };
-    PaintProperty<TranslateAnchorType> translateAnchor { TranslateAnchorType::Map };
-    PaintProperty<float> width { 1 };
-    PaintProperty<float> gapWidth { 0 };
-    PaintProperty<float> blur { 0 };
-    PaintProperty<float> offset { 0 };
-    PaintProperty<std::vector<float>, Faded<std::vector<float>>> dasharray { {} };
-    PaintProperty<std::string, Faded<std::string>> pattern { "" };
-
-    // Special case
-    float dashLineWidth = 1;
-
-    bool isVisible() const {
-        return opacity > 0 && color.value[3] > 0 && width > 0;
-    }
+    PaintProperty<float> lineOpacity { 1.0f };
+    PaintProperty<Color> lineColor { {{ 0, 0, 0, 1 }} };
+    PaintProperty<std::array<float, 2>> lineTranslate { {{ 0, 0 }} };
+    PaintProperty<TranslateAnchorType> lineTranslateAnchor { TranslateAnchorType::Map };
+    PaintProperty<float> lineWidth { 1 };
+    PaintProperty<float> lineGapWidth { 0 };
+    PaintProperty<float> lineBlur { 0 };
+    PaintProperty<float> lineOffset { 0 };
+    PaintProperty<std::vector<float>, CrossFadedFunctionEvaluator> lineDasharray { {} };
+    PaintProperty<std::string, CrossFadedFunctionEvaluator> linePattern { "" };
 };
 
 class LineLayer : public StyleLayer {
@@ -49,8 +41,19 @@ public:
 
     std::unique_ptr<Bucket> createBucket(StyleBucketParameters&) const override;
 
+    float getQueryRadius() const override;
+    bool queryIntersectsGeometry(
+            const GeometryCollection& queryGeometry,
+            const GeometryCollection& geometry,
+            const float bearing,
+            const float pixelsToTileUnits) const override;
+
     LineLayoutProperties layout;
     LinePaintProperties paint;
+
+    float dashLineWidth = 1;
+private:
+    float getLineWidth() const;
 };
 
 template <>
@@ -59,5 +62,3 @@ inline bool StyleLayer::is<LineLayer>() const {
 }
 
 } // namespace mbgl
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef MBGL_UTIL_RUN_LOOP
-#define MBGL_UTIL_RUN_LOOP
+#pragma once
 
 #include <mbgl/util/noncopyable.hpp>
 #include <mbgl/util/util.hpp>
@@ -107,6 +106,8 @@ public:
         return std::make_unique<WorkRequest>(task);
     }
 
+    class Impl;
+
 private:
     MBGL_STORE_THREAD(tid)
 
@@ -175,11 +176,8 @@ private:
     Queue queue;
     std::mutex mutex;
 
-    class Impl;
     std::unique_ptr<Impl> impl;
 };
 
 } // namespace util
 } // namespace mbgl
-
-#endif

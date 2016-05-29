@@ -1,5 +1,4 @@
-#ifndef MBGL_RENDERER_FILLBUCKET
-#define MBGL_RENDERER_FILLBUCKET
+#pragma once
 
 #include <mbgl/renderer/bucket.hpp>
 #include <mbgl/tile/geometry_tile.hpp>
@@ -16,6 +15,7 @@ namespace mbgl {
 
 class FillVertexBuffer;
 class OutlineShader;
+class OutlinePatternShader;
 class PlainShader;
 class PatternShader;
 
@@ -26,15 +26,16 @@ class FillBucket : public Bucket {
     static void free(void *userData, void *ptr);
 
     typedef ElementGroup<2> TriangleGroup;
-    typedef ElementGroup<1> LineGroup;
+    typedef ElementGroup<2> LineGroup;
 
 public:
     FillBucket();
     ~FillBucket() override;
 
     void upload(gl::GLObjectStore&) override;
-    void render(Painter&, const StyleLayer&, const TileID&, const mat4&) override;
+    void render(Painter&, const StyleLayer&, const UnwrappedTileID&, const mat4&) override;
     bool hasData() const override;
+    bool needsClipping() const override;
 
     void addGeometry(const GeometryCollection&);
     void tessellate();
@@ -42,6 +43,7 @@ public:
     void drawElements(PlainShader&, gl::GLObjectStore&);
     void drawElements(PatternShader&, gl::GLObjectStore&);
     void drawVertices(OutlineShader&, gl::GLObjectStore&);
+    void drawVertices(OutlinePatternShader&, gl::GLObjectStore&);
 
 private:
     TESSalloc *allocator;
@@ -64,5 +66,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

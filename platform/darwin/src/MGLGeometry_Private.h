@@ -5,7 +5,6 @@
     #import <UIKit/UIKit.h>
 #endif
 
-#import <mbgl/map/map.hpp>
 #import <mbgl/util/geo.hpp>
 
 /// Returns the smallest rectangle that contains both the given rectangle and
@@ -28,11 +27,6 @@ NS_INLINE MGLCoordinateBounds MGLCoordinateBoundsFromLatLngBounds(mbgl::LatLngBo
 NS_INLINE mbgl::LatLngBounds MGLLatLngBoundsFromCoordinateBounds(MGLCoordinateBounds coordinateBounds) {
     return mbgl::LatLngBounds::hull(MGLLatLngFromLocationCoordinate2D(coordinateBounds.sw),
                                     MGLLatLngFromLocationCoordinate2D(coordinateBounds.ne));
-}
-
-NS_INLINE BOOL MGLCoordinateInCoordinateBounds(CLLocationCoordinate2D coordinate, MGLCoordinateBounds coordinateBounds) {
-    mbgl::LatLngBounds bounds = MGLLatLngBoundsFromCoordinateBounds(coordinateBounds);
-    return bounds.contains(MGLLatLngFromLocationCoordinate2D(coordinate));
 }
 
 #if TARGET_OS_IPHONE

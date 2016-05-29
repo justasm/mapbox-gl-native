@@ -7,10 +7,7 @@
 #include <chrono>
 #include <experimental/optional>
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
-// Check sqlite3 library version.
-const static bool sqliteVersionCheck = []() {
+const static bool sqliteVersionCheck __attribute__((unused)) = []() {
     if (sqlite3_libversion_number() / 1000000 != SQLITE_VERSION_NUMBER / 1000000) {
         char message[96];
         snprintf(message, 96,
@@ -21,7 +18,6 @@ const static bool sqliteVersionCheck = []() {
 
     return true;
 }();
-#pragma GCC diagnostic pop
 
 namespace mapbox {
 namespace sqlite {
@@ -222,7 +218,9 @@ void Statement::bindBlob(int offset, const std::vector<uint8_t>& value, bool ret
     bindBlob(offset, value.data(), value.size(), retain);
 }
 
-template <> void Statement::bind(int offset, std::chrono::system_clock::time_point value) {
+template <>
+void Statement::bind(
+    int offset, std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds> value) {
     assert(stmt);
     check(sqlite3_bind_int64(stmt, offset, std::chrono::system_clock::to_time_t(value)));
 }
@@ -235,7 +233,10 @@ template <> void Statement::bind(int offset, optional<std::string> value) {
     }
 }
 
-template <> void Statement::bind(int offset, optional<std::chrono::system_clock::time_point> value) {
+template <>
+void Statement::bind(
+    int offset,
+    optional<std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>> value) {
     if (!value) {
         bind(offset, nullptr);
     } else {
@@ -287,9 +288,12 @@ template <> std::vector<uint8_t> Statement::get(int offset) {
     return { begin, end };
 }
 
-template <> std::chrono::system_clock::time_point Statement::get(int offset) {
+template <>
+std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>
+Statement::get(int offset) {
     assert(stmt);
-    return std::chrono::system_clock::from_time_t(sqlite3_column_int64(stmt, offset));
+    return std::chrono::time_point_cast<std::chrono::seconds>(
+        std::chrono::system_clock::from_time_t(sqlite3_column_int64(stmt, offset)));
 }
 
 template <> optional<int64_t> Statement::get(int offset) {
@@ -319,12 +323,15 @@ template <> optional<std::string> Statement::get(int offset) {
     }
 }
 
-template <> optional<std::chrono::system_clock::time_point> Statement::get(int offset) {
+template <>
+optional<std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>>
+Statement::get(int offset) {
     assert(stmt);
     if (sqlite3_column_type(stmt, offset) == SQLITE_NULL) {
-        return optional<std::chrono::system_clock::time_point>();
+        return {};
     } else {
-        return get<std::chrono::system_clock::time_point>(offset);
+        return get<std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>>(
+            offset);
     }
 }
 
@@ -336,6 +343,41 @@ void Statement::reset() {
 void Statement::clearBindings() {
     assert(stmt);
     sqlite3_clear_bindings(stmt);
+}
+
+Transaction::Transaction(Database& db_, Mode mode)
+    : db(db_) {
+    switch (mode) {
+    case Deferred:
+        db.exec("BEGIN DEFERRED TRANSACTION");
+        break;
+    case Immediate:
+        db.exec("BEGIN IMMEDIATE TRANSACTION");
+        break;
+    case Exclusive:
+        db.exec("BEGIN EXCLUSIVE TRANSACTION");
+        break;
+    }
+}
+
+Transaction::~Transaction() {
+    if (needRollback) {
+        try {
+            rollback();
+        } catch (...) {
+            // Ignore failed rollbacks in destructor.
+        }
+    }
+}
+
+void Transaction::commit() {
+    needRollback = false;
+    db.exec("COMMIT TRANSACTION");
+}
+
+void Transaction::rollback() {
+    needRollback = false;
+    db.exec("ROLLBACK TRANSACTION");
 }
 
 } // namespace sqlite

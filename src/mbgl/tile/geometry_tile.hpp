@@ -1,18 +1,18 @@
-#ifndef MBGL_MAP_GEOMETRY_TILE
-#define MBGL_MAP_GEOMETRY_TILE
+#pragma once
 
-#include <mapbox/variant.hpp>
-
-#include <mbgl/style/value.hpp>
+#include <mbgl/util/geometry.hpp>
+#include <mbgl/util/feature.hpp>
 #include <mbgl/util/chrono.hpp>
 #include <mbgl/util/ptr.hpp>
-#include <mbgl/util/vec.hpp>
 #include <mbgl/util/noncopyable.hpp>
 #include <mbgl/util/optional.hpp>
+#include <mbgl/util/variant.hpp>
+#include <mbgl/util/constants.hpp>
 
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <functional>
 
 namespace mbgl {
@@ -24,22 +24,33 @@ enum class FeatureType : uint8_t {
     Polygon = 3
 };
 
+class CanonicalTileID;
+
 // Normalized vector tile coordinates.
 // Each geometry coordinate represents a point in a bidimensional space,
 // varying from -V...0...+V, where V is the maximum extent applicable.
-using GeometryCoordinate  = vec2<int16_t>;
-using GeometryCoordinates = std::vector<GeometryCoordinate>;
-using GeometryCollection  = std::vector<GeometryCoordinates>;
+using GeometryCoordinate = Point<int16_t>;
+
+class GeometryCoordinates : public std::vector<GeometryCoordinate> {
+public:
+    using coordinate_type = int16_t;
+    using std::vector<GeometryCoordinate>::vector;
+};
+
+class GeometryCollection : public std::vector<GeometryCoordinates> {
+public:
+    using coordinate_type = int16_t;
+    using std::vector<GeometryCoordinates>::vector;
+};
 
 class GeometryTileFeature : private util::noncopyable {
 public:
-    static const uint32_t defaultExtent = 4096;
-
     virtual ~GeometryTileFeature() = default;
     virtual FeatureType getType() const = 0;
     virtual optional<Value> getValue(const std::string& key) const = 0;
+    virtual Feature::property_map getProperties() const { return Feature::property_map(); }
+    virtual optional<uint64_t> getID() const { return {}; }
     virtual GeometryCollection getGeometries() const = 0;
-    virtual uint32_t getExtent() const { return defaultExtent; }
 };
 
 class GeometryTileLayer : private util::noncopyable {
@@ -47,6 +58,7 @@ public:
     virtual ~GeometryTileLayer() = default;
     virtual std::size_t featureCount() const = 0;
     virtual util::ptr<const GeometryTileFeature> getFeature(std::size_t) const = 0;
+    virtual std::string getName() const = 0;
 };
 
 class GeometryTile : private util::noncopyable {
@@ -63,8 +75,8 @@ public:
 
     using Callback = std::function<void (std::exception_ptr,
                                          std::unique_ptr<GeometryTile>,
-                                         optional<SystemTimePoint> modified,
-                                         optional<SystemTimePoint> expires)>;
+                                         optional<Timestamp> modified,
+                                         optional<Timestamp> expires)>;
     /*
      * Monitor the tile held by this object for changes. When the tile is loaded for the first time,
      * or updates, the callback is executed. If an error occurs, the first parameter will be set.
@@ -76,17 +88,10 @@ public:
     virtual std::unique_ptr<AsyncRequest> monitorTile(const Callback&) = 0;
 };
 
-class GeometryTileFeatureExtractor {
-public:
-    GeometryTileFeatureExtractor(const GeometryTileFeature& feature_)
-        : feature(feature_) {}
+// classifies an array of rings into polygons with outer rings and holes
+std::vector<GeometryCollection> classifyRings(const GeometryCollection&);
 
-    optional<Value> getValue(const std::string& key) const;
-
-private:
-    const GeometryTileFeature& feature;
-};
+// convert from GeometryTileFeature to Feature (eventually we should eliminate GeometryTileFeature)
+Feature convertFeature(const GeometryTileFeature&, const CanonicalTileID&);
 
 } // namespace mbgl
-
-#endif

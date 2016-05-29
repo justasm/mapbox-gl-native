@@ -1,5 +1,4 @@
-#ifndef MBGL_GL_GL
-#define MBGL_GL_GL
+#pragma once
 
 //#define GL_TRACK
 
@@ -110,31 +109,14 @@ public:
 using glProc = void (*)();
 void InitializeExtensions(glProc (*getProcAddress)(const char *));
 
-static gl::ExtensionFunction<
-    void (GLuint array)>
-    BindVertexArray({
-        {"GL_ARB_vertex_array_object", "glBindVertexArray"},
-        {"GL_OES_vertex_array_object", "glBindVertexArrayOES"},
-        {"GL_APPLE_vertex_array_object", "glBindVertexArrayAPPLE"}
-    });
+extern ExtensionFunction<void (GLuint array)>
+    BindVertexArray;
 
-static gl::ExtensionFunction<
-    void (GLsizei n,
-          const GLuint* arrays)>
-    DeleteVertexArrays({
-        {"GL_ARB_vertex_array_object", "glDeleteVertexArrays"},
-        {"GL_OES_vertex_array_object", "glDeleteVertexArraysOES"},
-        {"GL_APPLE_vertex_array_object", "glDeleteVertexArraysAPPLE"}
-    });
+extern ExtensionFunction<void (GLsizei n, const GLuint* arrays)>
+    DeleteVertexArrays;
 
-static gl::ExtensionFunction<
-    void (GLsizei n,
-          GLuint* arrays)>
-    GenVertexArrays({
-        {"GL_ARB_vertex_array_object", "glGenVertexArrays"},
-        {"GL_OES_vertex_array_object", "glGenVertexArraysOES"},
-        {"GL_APPLE_vertex_array_object", "glGenVertexArraysAPPLE"}
-    });
+extern ExtensionFunction<void (GLsizei n, GLuint* arrays)>
+    GenVertexArrays;
 
 } // namespace gl
 } // namespace mbgl
@@ -180,6 +162,4 @@ void mbx_glTexImage2D(GLenum target,
                       GLenum format,
                       GLenum type,
                       const GLvoid * data);
-#endif
-
 #endif

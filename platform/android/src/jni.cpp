@@ -21,6 +21,7 @@
 #include <mbgl/storage/network_status.hpp>
 #include <mbgl/util/exception.hpp>
 #include <mbgl/util/string.hpp>
+#include <mbgl/util/run_loop.hpp>
 
 #include <jni/jni.hpp>
 
@@ -139,6 +140,8 @@ jni::jmethodID* offlineRegionStatusConstructorId = nullptr;
 jni::jfieldID* offlineRegionStatusDownloadStateId = nullptr;
 jni::jfieldID* offlineRegionStatusCompletedResourceCountId = nullptr;
 jni::jfieldID* offlineRegionStatusCompletedResourceSizeId = nullptr;
+jni::jfieldID* offlineRegionStatusCompletedTileCountId = nullptr;
+jni::jfieldID* offlineRegionStatusCompletedTileSizeId = nullptr;
 jni::jfieldID* offlineRegionStatusRequiredResourceCountId = nullptr;
 jni::jfieldID* offlineRegionStatusRequiredResourceCountIsPreciseId = nullptr;
 
@@ -404,27 +407,6 @@ void nativeDestroySurface(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr
     nativeMapView->destroySurface();
 }
 
-void nativePause(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr) {
-    mbgl::Log::Debug(mbgl::Event::JNI, "nativePause");
-    assert(nativeMapViewPtr != 0);
-    NativeMapView *nativeMapView = reinterpret_cast<NativeMapView *>(nativeMapViewPtr);
-    nativeMapView->pause();
-}
-
-jboolean nativeIsPaused(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr) {
-    mbgl::Log::Debug(mbgl::Event::JNI, "nativeIsPaused");
-    assert(nativeMapViewPtr != 0);
-    NativeMapView *nativeMapView = reinterpret_cast<NativeMapView *>(nativeMapViewPtr);
-    return nativeMapView->getMap().isPaused();
-}
-
-void nativeResume(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr) {
-    mbgl::Log::Debug(mbgl::Event::JNI, "nativeResume");
-    assert(nativeMapViewPtr != 0);
-    NativeMapView *nativeMapView = reinterpret_cast<NativeMapView *>(nativeMapViewPtr);
-    nativeMapView->resume();
-}
-
 void nativeUpdate(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr) {
     mbgl::Log::Debug(mbgl::Event::JNI, "nativeUpdate");
     assert(nativeMapViewPtr != 0);
@@ -432,11 +414,11 @@ void nativeUpdate(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr) {
     nativeMapView->getMap().update(mbgl::Update::Repaint);
 }
 
-void nativeRenderSync(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr) {
-    mbgl::Log::Debug(mbgl::Event::JNI, "nativeRenderSync");
+void nativeRender(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr) {
+    mbgl::Log::Debug(mbgl::Event::JNI, "nativeRender");
     assert(nativeMapViewPtr != 0);
     NativeMapView *nativeMapView = reinterpret_cast<NativeMapView *>(nativeMapViewPtr);
-    nativeMapView->getMap().renderSync();
+    nativeMapView->render();
 }
 
 void nativeViewResize(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr, jint width, jint height) {
@@ -1195,7 +1177,7 @@ void nativeJumpTo(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr, jdoubl
     nativeMapView->getMap().jumpTo(options);
 }
 
-void nativeEaseTo(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr, jdouble angle, jni::jobject* centerLatLng, jlong duration, jdouble pitch, jdouble zoom) {
+void nativeEaseTo(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr, jdouble angle, jni::jobject* centerLatLng, jlong duration, jdouble pitch, jdouble zoom, jboolean easing) {
     mbgl::Log::Debug(mbgl::Event::JNI, "nativeEaseTo");
     assert(nativeMapViewPtr != 0);
     NativeMapView *nativeMapView = reinterpret_cast<NativeMapView *>(nativeMapViewPtr);
@@ -1218,6 +1200,11 @@ void nativeEaseTo(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr, jdoubl
     mbgl::AnimationOptions animationOptions;
     animationOptions.duration.emplace(mbgl::Duration(duration));
 
+    if (!easing) {
+       // add a linear interpolator instead of easing
+       animationOptions.easing = mbgl::util::UnitBezier(0, 0, 1, 1);
+    }
+
     nativeMapView->getMap().easeTo(cameraOptions, animationOptions);
 }
 
@@ -1227,7 +1214,6 @@ void nativeSetContentPadding(JNIEnv *env, jni::jobject* obj,long nativeMapViewPt
     NativeMapView *nativeMapView = reinterpret_cast<NativeMapView *>(nativeMapViewPtr);
     nativeMapView->setInsets({top, left, bottom, right});
 }
-
 
 void nativeFlyTo(JNIEnv *env, jni::jobject* obj, jlong nativeMapViewPtr, jdouble angle, jni::jobject* centerLatLng, jlong duration, jdouble pitch, jdouble zoom) {
     mbgl::Log::Debug(mbgl::Event::JNI, "nativeFlyTo");
@@ -1526,11 +1512,17 @@ void setOfflineRegionObserver(JNIEnv *env, jni::jobject* offlineRegion_, jni::jo
                     break;
             }
 
+            // Create a new local reference frame (capacity 1 for the NewObject allocation below)
+            // to avoid a local reference table overflow (#4706)
+            jni::UniqueLocalFrame frame = jni::PushLocalFrame(*env2, 1);
+
             // Stats object
             jni::jobject* jstatus = &jni::NewObject(*env2, *offlineRegionStatusClass, *offlineRegionStatusConstructorId);
             jni::SetField<jint>(*env2, jstatus, *offlineRegionStatusDownloadStateId, downloadState);
             jni::SetField<jlong>(*env2, jstatus, *offlineRegionStatusCompletedResourceCountId, status.completedResourceCount);
             jni::SetField<jlong>(*env2, jstatus, *offlineRegionStatusCompletedResourceSizeId, status.completedResourceSize);
+            jni::SetField<jlong>(*env2, jstatus, *offlineRegionStatusCompletedTileCountId, status.completedTileCount);
+            jni::SetField<jlong>(*env2, jstatus, *offlineRegionStatusCompletedTileSizeId, status.completedTileSize);
             jni::SetField<jlong>(*env2, jstatus, *offlineRegionStatusRequiredResourceCountId, status.requiredResourceCount);
             jni::SetField<jboolean>(*env2, jstatus, *offlineRegionStatusRequiredResourceCountIsPreciseId, status.requiredResourceCountIsPrecise);
             jni::CallMethod<void>(*env2, observerCallback.get(), *offlineRegionObserveronStatusChangedId, jstatus);
@@ -1722,6 +1714,8 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
 
     jni::JNIEnv& env = jni::GetEnv(*vm, jni::jni_version_1_6);
 
+    static mbgl::util::RunLoop mainRunLoop;
+
     mbgl::android::RegisterNativeHTTPRequest(env);
 
     latLngClass = &jni::FindClass(env, "com/mapbox/mapboxsdk/geometry/LatLng");
@@ -1815,11 +1809,8 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
         MAKE_NATIVE_METHOD(nativeTerminateContext, "(J)V"),
         MAKE_NATIVE_METHOD(nativeCreateSurface, "(JLandroid/view/Surface;)V"),
         MAKE_NATIVE_METHOD(nativeDestroySurface, "(J)V"),
-        MAKE_NATIVE_METHOD(nativePause, "(J)V"),
-        MAKE_NATIVE_METHOD(nativeIsPaused, "(J)Z"),
-        MAKE_NATIVE_METHOD(nativeResume, "(J)V"),
         MAKE_NATIVE_METHOD(nativeUpdate, "(J)V"),
-        MAKE_NATIVE_METHOD(nativeRenderSync, "(J)V"),
+        MAKE_NATIVE_METHOD(nativeRender, "(J)V"),
         MAKE_NATIVE_METHOD(nativeViewResize, "(JII)V"),
         MAKE_NATIVE_METHOD(nativeFramebufferResize, "(JII)V"),
         MAKE_NATIVE_METHOD(nativeAddClass, "(JLjava/lang/String;)V"),
@@ -1881,7 +1872,7 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
         MAKE_NATIVE_METHOD(nativeLatLngForPixel, "(JLandroid/graphics/PointF;)Lcom/mapbox/mapboxsdk/geometry/LatLng;"),
         MAKE_NATIVE_METHOD(nativeGetTopOffsetPixelsForAnnotationSymbol, "(JLjava/lang/String;)D"),
         MAKE_NATIVE_METHOD(nativeJumpTo, "(JDLcom/mapbox/mapboxsdk/geometry/LatLng;DD)V"),
-        MAKE_NATIVE_METHOD(nativeEaseTo, "(JDLcom/mapbox/mapboxsdk/geometry/LatLng;JDD)V"),
+        MAKE_NATIVE_METHOD(nativeEaseTo, "(JDLcom/mapbox/mapboxsdk/geometry/LatLng;JDDZ)V"),
         MAKE_NATIVE_METHOD(nativeFlyTo, "(JDLcom/mapbox/mapboxsdk/geometry/LatLng;JDD)V"),
         MAKE_NATIVE_METHOD(nativeAddCustomLayer, "(JLcom/mapbox/mapboxsdk/layers/CustomLayer;Ljava/lang/String;)V"),
         MAKE_NATIVE_METHOD(nativeRemoveCustomLayer, "(JLjava/lang/String;)V"),
@@ -1964,6 +1955,8 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
     offlineRegionStatusDownloadStateId = &jni::GetFieldID(env, *offlineRegionStatusClass, "downloadState", "I");
     offlineRegionStatusCompletedResourceCountId = &jni::GetFieldID(env, *offlineRegionStatusClass, "completedResourceCount", "J");
     offlineRegionStatusCompletedResourceSizeId = &jni::GetFieldID(env, *offlineRegionStatusClass, "completedResourceSize", "J");
+    offlineRegionStatusCompletedTileCountId = &jni::GetFieldID(env, *offlineRegionStatusClass, "completedTileCount", "J");
+    offlineRegionStatusCompletedTileSizeId = &jni::GetFieldID(env, *offlineRegionStatusClass, "completedTileSize", "J");
     offlineRegionStatusRequiredResourceCountId = &jni::GetFieldID(env, *offlineRegionStatusClass, "requiredResourceCount", "J");
     offlineRegionStatusRequiredResourceCountIsPreciseId = &jni::GetFieldID(env, *offlineRegionStatusClass, "requiredResourceCountIsPrecise", "Z");
 

@@ -1,5 +1,4 @@
-#ifndef MBGL_POINT_ANNOTATION_IMPL
-#define MBGL_POINT_ANNOTATION_IMPL
+#pragma once
 
 #include <mbgl/annotation/annotation.hpp>
 #include <mbgl/annotation/point_annotation.hpp>
@@ -35,6 +34,7 @@ BOOST_GEOMETRY_REGISTER_BOX(mbgl::LatLngBounds, mbgl::LatLng, southwest(), north
 namespace mbgl {
 
 class AnnotationTileLayer;
+class CanonicalTileID;
 
 class PointAnnotationImpl {
 public:
@@ -43,7 +43,7 @@ public:
 
     PointAnnotationImpl(const AnnotationID, const PointAnnotation&);
 
-    void updateLayer(const TileID&, AnnotationTileLayer&) const;
+    void updateLayer(const CanonicalTileID&, AnnotationTileLayer&) const;
 
     const AnnotationID id;
     const PointAnnotation point;
@@ -67,5 +67,3 @@ struct indexable<std::shared_ptr<const mbgl::PointAnnotationImpl>> {
 } // end namespace index
 } // end namespace geometry
 } // end namespace boost
-
-#endif

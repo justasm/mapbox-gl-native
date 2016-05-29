@@ -1,5 +1,4 @@
-#ifndef MBGL_GL_GL_VALUES
-#define MBGL_GL_GL_VALUES
+#pragma once
 
 #include <cstdint>
 #include <tuple>
@@ -240,6 +239,19 @@ struct LineWidth {
     }
 };
 
+struct ActiveTexture {
+    using Type = GLint;
+    static const Type Default;
+    inline static void Set(const Type& value) {
+        MBGL_CHECK_ERROR(glActiveTexture(value));
+    }
+    inline static Type Get() {
+        Type activeTexture;
+        MBGL_CHECK_ERROR(glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture));
+        return activeTexture;
+    }
+};
+
 #ifndef GL_ES_VERSION_2_0
 
 struct PixelZoom {
@@ -256,6 +268,10 @@ struct PixelZoom {
     }
 };
 
+inline bool operator!=(const PixelZoom::Type& a, const PixelZoom::Type& b) {
+    return a.xfactor != b.xfactor || a.yfactor != b.yfactor;
+}
+
 struct RasterPos {
     using Type = std::array<GLdouble, 4>;
     static const Type Default;
@@ -269,9 +285,7 @@ struct RasterPos {
     }
 };
 
-#endif
+#endif // GL_ES_VERSION_2_0
 
 } // namespace gl
 } // namespace mbgl
-
-#endif // MBGL_RENDERER_GL_CONFIG

@@ -1,5 +1,5 @@
 #include <mbgl/storage/online_file_source.hpp>
-#include <mbgl/storage/http_context_base.hpp>
+#include <mbgl/storage/http_file_source.hpp>
 #include <mbgl/storage/network_status.hpp>
 
 #include <mbgl/storage/response.hpp>
@@ -22,20 +22,20 @@
 
 namespace mbgl {
 
-class OnlineFileRequestImpl : public util::noncopyable {
+class OnlineFileRequest : public AsyncRequest {
 public:
     using Callback = std::function<void (Response)>;
 
-    OnlineFileRequestImpl(AsyncRequest*, const Resource&, Callback, OnlineFileSource::Impl&);
-    ~OnlineFileRequestImpl();
+    OnlineFileRequest(const Resource&, Callback, OnlineFileSource::Impl&);
+    ~OnlineFileRequest();
 
-    void networkIsReachableAgain(OnlineFileSource::Impl&);
-    void schedule(OnlineFileSource::Impl&, optional<SystemTimePoint> expires);
-    void completed(OnlineFileSource::Impl&, Response);
+    void networkIsReachableAgain();
+    void schedule(optional<Timestamp> expires);
+    void completed(Response);
 
-    AsyncRequest* key;
+    OnlineFileSource::Impl& impl;
     Resource resource;
-    HTTPRequestBase* request = nullptr;
+    std::unique_ptr<AsyncRequest> request;
     util::Timer timer;
     Callback callback;
 
@@ -52,8 +52,7 @@ public:
 
 class OnlineFileSource::Impl {
 public:
-    // Dummy parameter is a workaround for a gcc 4.9 bug.
-    Impl(int) {
+    Impl() {
         NetworkStatus::Subscribe(&reachability);
     }
 
@@ -61,16 +60,16 @@ public:
         NetworkStatus::Unsubscribe(&reachability);
     }
 
-    void request(AsyncRequest* key, Resource resource, Callback callback) {
-        allRequests[key] = std::make_unique<OnlineFileRequestImpl>(key, resource, callback, *this);
+    void add(OnlineFileRequest* request) {
+        allRequests.insert(request);
     }
 
-    void cancel(AsyncRequest* key) {
-        allRequests.erase(key);
-        if (activeRequests.erase(key)) {
+    void remove(OnlineFileRequest* request) {
+        allRequests.erase(request);
+        if (activeRequests.erase(request)) {
             activatePendingRequest();
         } else {
-            auto it = pendingRequestsMap.find(key);
+            auto it = pendingRequestsMap.find(request);
             if (it != pendingRequestsMap.end()) {
                 pendingRequestsList.erase(it->second);
                 pendingRequestsMap.erase(it);
@@ -78,30 +77,30 @@ public:
         }
     }
 
-    void activateOrQueueRequest(OnlineFileRequestImpl* impl) {
-        assert(allRequests.find(impl->key) != allRequests.end());
-        assert(activeRequests.find(impl->key) == activeRequests.end());
-        assert(!impl->request);
+    void activateOrQueueRequest(OnlineFileRequest* request) {
+        assert(allRequests.find(request) != allRequests.end());
+        assert(activeRequests.find(request) == activeRequests.end());
+        assert(!request->request);
 
-        if (activeRequests.size() >= HTTPContextBase::maximumConcurrentRequests()) {
-            queueRequest(impl);
+        if (activeRequests.size() >= HTTPFileSource::maximumConcurrentRequests()) {
+            queueRequest(request);
         } else {
-            activateRequest(impl);
+            activateRequest(request);
         }
     }
 
-    void queueRequest(OnlineFileRequestImpl* impl) {
-        auto it = pendingRequestsList.insert(pendingRequestsList.end(), impl->key);
-        pendingRequestsMap.emplace(impl->key, std::move(it));
+    void queueRequest(OnlineFileRequest* request) {
+        auto it = pendingRequestsList.insert(pendingRequestsList.end(), request);
+        pendingRequestsMap.emplace(request, std::move(it));
     }
 
-    void activateRequest(OnlineFileRequestImpl* impl) {
-        activeRequests.insert(impl->key);
-        impl->request = httpContext->createRequest(impl->resource, [=] (Response response) {
-            impl->request = nullptr;
-            activeRequests.erase(impl->key);
+    void activateRequest(OnlineFileRequest* request) {
+        activeRequests.insert(request);
+        request->request = httpFileSource.request(request->resource, [=] (Response response) {
+            activeRequests.erase(request);
             activatePendingRequest();
-            impl->completed(*this, response);
+            request->request.reset();
+            request->completed(response);
         });
     }
 
@@ -110,20 +109,18 @@ public:
             return;
         }
 
-        AsyncRequest* key = pendingRequestsList.front();
+        OnlineFileRequest* request = pendingRequestsList.front();
         pendingRequestsList.pop_front();
 
-        pendingRequestsMap.erase(key);
+        pendingRequestsMap.erase(request);
 
-        auto it = allRequests.find(key);
-        assert(it != allRequests.end());
-        activateRequest(it->second.get());
+        activateRequest(request);
     }
 
 private:
     void networkIsReachableAgain() {
-        for (auto& req : allRequests) {
-            req.second->networkIsReachableAgain(*this);
+        for (auto& request : allRequests) {
+            request->networkIsReachableAgain();
         }
     }
 
@@ -138,18 +135,17 @@ private:
      * Requests in any state are in `allRequests`. Requests in the pending state are in
      * `pendingRequests`. Requests in the active state are in `activeRequests`.
      */
-    std::unordered_map<AsyncRequest*, std::unique_ptr<OnlineFileRequestImpl>> allRequests;
-    std::list<AsyncRequest*> pendingRequestsList;
-    std::unordered_map<AsyncRequest*, std::list<AsyncRequest*>::iterator> pendingRequestsMap;
-    std::unordered_set<AsyncRequest*> activeRequests;
+    std::unordered_set<OnlineFileRequest*> allRequests;
+    std::list<OnlineFileRequest*> pendingRequestsList;
+    std::unordered_map<OnlineFileRequest*, std::list<OnlineFileRequest*>::iterator> pendingRequestsMap;
+    std::unordered_set<OnlineFileRequest*> activeRequests;
 
-    const std::unique_ptr<HTTPContextBase> httpContext { HTTPContextBase::createContext() };
+    HTTPFileSource httpFileSource;
     util::AsyncTask reachability { std::bind(&Impl::networkIsReachableAgain, this) };
 };
 
 OnlineFileSource::OnlineFileSource()
-    : thread(std::make_unique<util::Thread<Impl>>(
-          util::ThreadContext{ "OnlineFileSource", util::ThreadType::Unknown, util::ThreadPriority::Low }, 0)) {
+    : impl(std::make_unique<Impl>()) {
 }
 
 OnlineFileSource::~OnlineFileSource() = default;
@@ -183,40 +179,25 @@ std::unique_ptr<AsyncRequest> OnlineFileSource::request(const Resource& resource
         break;
     }
 
-    class OnlineFileRequest : public AsyncRequest {
-    public:
-        OnlineFileRequest(Resource resource_, FileSource::Callback callback_, util::Thread<OnlineFileSource::Impl>& thread_)
-            : thread(thread_),
-              workRequest(thread.invokeWithCallback(&OnlineFileSource::Impl::request, callback_, this, resource_)) {
-        }
-
-        ~OnlineFileRequest() override {
-            thread.invoke(&OnlineFileSource::Impl::cancel, this);
-        }
-
-        util::Thread<OnlineFileSource::Impl>& thread;
-        std::unique_ptr<AsyncRequest> workRequest;
-    };
-
-    return std::make_unique<OnlineFileRequest>(res, callback, *thread);
+    return std::make_unique<OnlineFileRequest>(res, callback, *impl);
 }
 
-OnlineFileRequestImpl::OnlineFileRequestImpl(AsyncRequest* key_, const Resource& resource_, Callback callback_, OnlineFileSource::Impl& impl)
-    : key(key_),
+OnlineFileRequest::OnlineFileRequest(const Resource& resource_, Callback callback_, OnlineFileSource::Impl& impl_)
+    : impl(impl_),
       resource(resource_),
       callback(std::move(callback_)) {
+    impl.add(this);
+
     // Force an immediate first request if we don't have an expiration time.
     if (resource.priorExpires) {
-        schedule(impl, resource.priorExpires);
+        schedule(resource.priorExpires);
     } else {
-        schedule(impl, SystemClock::now());
+        schedule(util::now());
     }
 }
 
-OnlineFileRequestImpl::~OnlineFileRequestImpl() {
-    if (request) {
-        request->cancel();
-    }
+OnlineFileRequest::~OnlineFileRequest() {
+    impl.remove(this);
 }
 
 static Duration errorRetryTimeout(Response::Error::Reason failedRequestReason, uint32_t failedRequests) {
@@ -233,20 +214,20 @@ static Duration errorRetryTimeout(Response::Error::Reason failedRequestReason, u
     }
 }
 
-static Duration expirationTimeout(optional<SystemTimePoint> expires, uint32_t expiredRequests) {
+static Duration expirationTimeout(optional<Timestamp> expires, uint32_t expiredRequests) {
     if (expiredRequests) {
         return Seconds(1 << std::min(expiredRequests - 1, 31u));
     } else if (expires) {
-        return std::max(SystemDuration::zero(), *expires - SystemClock::now());
+        return std::max(Seconds::zero(), *expires - util::now());
     } else {
         return Duration::max();
     }
 }
 
-SystemTimePoint interpolateExpiration(const SystemTimePoint& current,
-                                      optional<SystemTimePoint> prior,
-                                      bool& expired) {
-    auto now = SystemClock::now();
+Timestamp interpolateExpiration(const Timestamp& current,
+                                optional<Timestamp> prior,
+                                bool& expired) {
+    auto now = util::now();
     if (current > now) {
         return current;
     }
@@ -275,10 +256,10 @@ SystemTimePoint interpolateExpiration(const SystemTimePoint& current,
     // Assume that either the client or server clock is wrong and
     // try to interpolate a valid expiration date (from the client POV)
     // observing a minimum timeout.
-    return now + std::max<SystemDuration>(delta, util::CLOCK_SKEW_RETRY_TIMEOUT);
+    return now + std::max<Seconds>(delta, util::CLOCK_SKEW_RETRY_TIMEOUT);
 }
 
-void OnlineFileRequestImpl::schedule(OnlineFileSource::Impl& impl, optional<SystemTimePoint> expires) {
+void OnlineFileRequest::schedule(optional<Timestamp> expires) {
     if (request) {
         // There's already a request in progress; don't start another one.
         return;
@@ -307,7 +288,7 @@ void OnlineFileRequestImpl::schedule(OnlineFileSource::Impl& impl, optional<Syst
     });
 }
 
-void OnlineFileRequestImpl::completed(OnlineFileSource::Impl& impl, Response response) {
+void OnlineFileRequest::completed(Response response) {
     // If we didn't get various caching headers in the response, continue using the
     // previous values. Otherwise, update the previous values to the new values.
 
@@ -345,15 +326,20 @@ void OnlineFileRequestImpl::completed(OnlineFileSource::Impl& impl, Response res
         failedRequestReason = Response::Error::Reason::Success;
     }
 
-    callback(response);
-    schedule(impl, response.expires);
+    schedule(response.expires);
+
+    // Calling the callback may result in `this` being deleted. It needs to be done last,
+    // and needs to make a local copy of the callback to ensure that it remains valid for
+    // the duration of the call.
+    auto callback_ = callback;
+    callback_(response);
 }
 
-void OnlineFileRequestImpl::networkIsReachableAgain(OnlineFileSource::Impl& impl) {
+void OnlineFileRequest::networkIsReachableAgain() {
     // We need all requests to fail at least once before we are going to start retrying
     // them, and we only immediately restart request that failed due to connection issues.
     if (failedRequestReason == Response::Error::Reason::Connection) {
-        schedule(impl, SystemClock::now());
+        schedule(util::now());
     }
 }
 

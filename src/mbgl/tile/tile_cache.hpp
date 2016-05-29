@@ -1,9 +1,10 @@
-#ifndef MBGL_MAP_TILE_CACHE
-#define MBGL_MAP_TILE_CACHE
+#pragma once
+
+#include <mbgl/tile/tile_id.hpp>
 
 #include <list>
 #include <memory>
-#include <unordered_map>
+#include <map>
 
 namespace mbgl {
 
@@ -15,18 +16,16 @@ public:
 
     void setSize(size_t);
     size_t getSize() const { return size; };
-    void add(uint64_t key, std::shared_ptr<TileData> data);
-    std::shared_ptr<TileData> get(uint64_t key);
-    bool has(uint64_t key);
+    void add(const OverscaledTileID& key, std::unique_ptr<TileData> data);
+    std::unique_ptr<TileData> get(const OverscaledTileID& key);
+    bool has(const OverscaledTileID& key);
     void clear();
 
 private:
-    std::unordered_map<uint64_t, std::shared_ptr<TileData>> tiles;
-    std::list<uint64_t> orderedKeys;
+    std::map<OverscaledTileID, std::unique_ptr<TileData>> tiles;
+    std::list<OverscaledTileID> orderedKeys;
 
     size_t size;
 };
 
 } // namespace mbgl
-
-#endif

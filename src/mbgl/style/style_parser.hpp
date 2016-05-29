@@ -1,8 +1,9 @@
-#ifndef MBGL_STYLE_STYLE_PARSER
-#define MBGL_STYLE_STYLE_PARSER
+#pragma once
 
+#include <mbgl/style/types.hpp>
 #include <mbgl/style/style_layer.hpp>
 #include <mbgl/source/source.hpp>
+#include <mbgl/style/filter.hpp>
 #include <mbgl/util/rapidjson.hpp>
 
 #include <vector>
@@ -15,6 +16,8 @@ namespace mbgl {
 
 class StyleLayer;
 class Source;
+
+Filter parseFilter(const JSValue&);
 
 class StyleParser {
 public:
@@ -29,7 +32,7 @@ public:
     std::vector<std::unique_ptr<StyleLayer>> layers;
 
     // Statically evaluate layer properties to determine what font stacks are used.
-    std::vector<std::string> fontStacks() const;
+    std::vector<FontStack> fontStacks() const;
 
     static std::unique_ptr<SourceInfo> parseTileJSON(const std::string& json, const std::string& sourceURL, SourceType, uint16_t tileSize);
     static std::unique_ptr<SourceInfo> parseTileJSON(const JSValue&);
@@ -50,5 +53,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

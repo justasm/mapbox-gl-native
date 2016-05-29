@@ -7,6 +7,7 @@
 #include <mbgl/storage/default_file_source.hpp>
 #include <mbgl/util/image.hpp>
 #include <mbgl/util/io.hpp>
+#include <mbgl/util/run_loop.hpp>
 
 #include <future>
 
@@ -18,6 +19,8 @@
 
 TEST(API, TEST_REQUIRES_SERVER(RenderMissingTile)) {
     using namespace mbgl;
+
+    util::RunLoop loop;
 
     const auto style = util::read_file("test/fixtures/api/water_missing_tiles.json");
 
@@ -38,32 +41,24 @@ TEST(API, TEST_REQUIRES_SERVER(RenderMissingTile)) {
 
     // This host does not respond (== connection error).
     map.setStyleJSON(style, "");
-    std::promise<void> promise;
-    map.renderStill([&promise, &message](std::exception_ptr err, PremultipliedImage&&) {
+    map.renderStill([&](std::exception_ptr err, PremultipliedImage&&) {
         ASSERT_TRUE(err.operator bool());
         try {
             std::rethrow_exception(err);
         } catch (const std::exception& ex) {
             message = ex.what();
-#ifdef MBGL_HTTP_NSURL
-            EXPECT_STREQ("Could not connect to the server.", ex.what());
-#elif MBGL_HTTP_CURL
-            const char* prefix = "Couldn't connect to server:";
-            EXPECT_EQ(0, strncmp(prefix, ex.what(), strlen(prefix))) << "Full message is: \""
-                                                                     << ex.what() << "\"";
-#else
-            FAIL();
-#endif
+            EXPECT_TRUE(message.find("onnect") != std::string::npos); // [C|c]onnect
         }
-        promise.set_value();
+        loop.stop();
     });
-    promise.get_future().get();
+
+    loop.run();
 
     auto observer = Log::removeObserver();
     auto flo = dynamic_cast<FixtureLogObserver*>(observer.get());
     EXPECT_EQ(1, flo->count(FixtureLog::Message(
                      EventSeverity::Error, Event::Style, -1,
-                     std::string("Failed to load tile 0/0/0 for source mapbox: " + message))));
+                     std::string("Failed to load tile 0/0/0=>0 for source mapbox: " + message))));
     auto unchecked = flo->unchecked();
     EXPECT_TRUE(unchecked.empty()) << unchecked;
 }

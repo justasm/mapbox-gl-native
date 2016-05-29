@@ -1,39 +1,45 @@
-#ifndef MBGL_MAP_VECTOR_TILE
-#define MBGL_MAP_VECTOR_TILE
+#pragma once
 
 #include <mbgl/tile/geometry_tile.hpp>
-#include <mbgl/map/tile_id.hpp>
-#include <mbgl/util/pbf.hpp>
+#include <mbgl/tile/tile_id.hpp>
+#include <protozero/pbf_reader.hpp>
 
 #include <map>
+#include <unordered_map>
+#include <functional>
 
 namespace mbgl {
 
 class VectorTileLayer;
 
+using pbf_iter_type = protozero::pbf_reader::const_uint32_iterator;
+using packed_iter_type = std::pair<pbf_iter_type,pbf_iter_type>;
+
 class VectorTileFeature : public GeometryTileFeature {
 public:
-    VectorTileFeature(pbf, const VectorTileLayer&);
+    VectorTileFeature(protozero::pbf_reader, const VectorTileLayer&);
 
     FeatureType getType() const override { return type; }
     optional<Value> getValue(const std::string&) const override;
+    std::unordered_map<std::string,Value> getProperties() const override;
+    optional<uint64_t> getID() const override;
     GeometryCollection getGeometries() const override;
-    uint32_t getExtent() const override;
 
 private:
     const VectorTileLayer& layer;
-    uint64_t id = 0;
+    optional<uint64_t> id;
     FeatureType type = FeatureType::Unknown;
-    pbf tags_pbf;
-    pbf geometry_pbf;
+    packed_iter_type tags_iter;
+    packed_iter_type geometry_iter;
 };
 
 class VectorTileLayer : public GeometryTileLayer {
 public:
-    VectorTileLayer(pbf);
+    VectorTileLayer(protozero::pbf_reader);
 
     std::size_t featureCount() const override { return features.size(); }
     util::ptr<const GeometryTileFeature> getFeature(std::size_t) const override;
+    std::string getName() const override;
 
 private:
     friend class VectorTile;
@@ -41,9 +47,10 @@ private:
 
     std::string name;
     uint32_t extent = 4096;
-    std::map<std::string, uint32_t> keys;
+    std::map<std::string, uint32_t> keysMap;
+    std::vector<std::reference_wrapper<const std::string>> keys;
     std::vector<Value> values;
-    std::vector<pbf> features;
+    std::vector<protozero::pbf_reader> features;
 };
 
 class VectorTile : public GeometryTile {
@@ -63,17 +70,15 @@ class FileSource;
 
 class VectorTileMonitor : public GeometryTileMonitor {
 public:
-    VectorTileMonitor(const TileID&, float pixelRatio, const std::string& urlTemplate, FileSource&);
+    VectorTileMonitor(const OverscaledTileID&, float pixelRatio, const std::string& urlTemplate, FileSource&);
 
     std::unique_ptr<AsyncRequest> monitorTile(const GeometryTileMonitor::Callback&) override;
 
 private:
-    TileID tileID;
+    OverscaledTileID tileID;
     float pixelRatio;
     std::string urlTemplate;
     FileSource& fileSource;
 };
 
 } // namespace mbgl
-
-#endif

@@ -25,5 +25,9 @@ CacheControl CacheControl::parse(const std::string& value) {
     return result;
 }
 
+optional<Timestamp> CacheControl::toTimePoint() const {
+    return maxAge ? util::now() + Seconds(*maxAge) : optional<Timestamp>{};
+}
+
 } // namespace http
 } // namespace mbgl

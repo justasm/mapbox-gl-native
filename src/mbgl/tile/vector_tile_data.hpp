@@ -1,9 +1,9 @@
-#ifndef MBGL_MAP_VECTOR_TILE_DATA
-#define MBGL_MAP_VECTOR_TILE_DATA
+#pragma once
 
 #include <mbgl/tile/tile_data.hpp>
 #include <mbgl/tile/tile_worker.hpp>
 #include <mbgl/text/placement_config.hpp>
+#include <mbgl/util/feature.hpp>
 
 #include <atomic>
 #include <memory>
@@ -14,10 +14,11 @@ namespace mbgl {
 class Style;
 class AsyncRequest;
 class GeometryTileMonitor;
+class FeatureIndex;
 
 class VectorTileData : public TileData {
 public:
-    VectorTileData(const TileID&,
+    VectorTileData(const OverscaledTileID&,
                    std::unique_ptr<GeometryTileMonitor> monitor,
                    std::string sourceID,
                    Style&,
@@ -32,6 +33,12 @@ public:
 
     void redoPlacement(PlacementConfig config, const std::function<void()>&) override;
     void redoPlacement(const std::function<void()>&) override;
+
+    void queryRenderedFeatures(
+            std::unordered_map<std::string, std::vector<Feature>>& result,
+            const GeometryCoordinates& queryGeometry,
+            const TransformState&,
+            const optional<std::vector<std::string>>& layerIDs) override;
 
     void cancel() override;
 
@@ -48,14 +55,18 @@ private:
     // objects and they get added by tile parsing operations.
     std::unordered_map<std::string, std::unique_ptr<Bucket>> buckets;
 
+    std::unique_ptr<FeatureIndex> featureIndex;
+    std::unique_ptr<const GeometryTile> geometryTile;
+
     // Stores the placement configuration of the text that is currently placed on the screen.
     PlacementConfig placedConfig;
 
     // Stores the placement configuration of how the text should be placed. This isn't necessarily
     // the one that is being displayed.
     PlacementConfig targetConfig;
+
+    // Used to signal the worker that it should abandon parsing this tile as soon as possible.
+    std::atomic<bool> obsolete { false };
 };
 
 } // namespace mbgl
-
-#endif

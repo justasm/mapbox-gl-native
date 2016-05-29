@@ -1,21 +1,20 @@
-#ifndef MBGL_TEXT_COLLISION_FEATURE
-#define MBGL_TEXT_COLLISION_FEATURE
+#pragma once
 
-#include <mbgl/util/vec.hpp>
 #include <mbgl/geometry/anchor.hpp>
 #include <mbgl/text/shaping.hpp>
 #include <mbgl/tile/geometry_tile.hpp>
+#include <mbgl/geometry/feature_index.hpp>
 
 #include <vector>
 
 namespace mbgl {
     class CollisionBox {
         public:
-            explicit CollisionBox(const vec2<float> &_anchor, float _x1, float _y1, float _x2, float _y2, float _maxScale) :
+            explicit CollisionBox(const Point<float> &_anchor, float _x1, float _y1, float _x2, float _y2, float _maxScale) :
                 anchor(_anchor), x1(_x1), y1(_y1), x2(_x2), y2(_y2), maxScale(_maxScale) {}
 
             // the box is centered around the anchor point
-            vec2<float> anchor;
+            Point<float> anchor;
 
             // distances to the edges from the anchor
             float x1;
@@ -36,29 +35,30 @@ namespace mbgl {
             // for text
             inline explicit CollisionFeature(const GeometryCoordinates &line, const Anchor &anchor,
                     const Shaping &shapedText,
-                    const float boxScale, const float padding, const bool alongLine)
+                    const float boxScale, const float padding, const bool alongLine, const IndexedSubfeature& indexedFeature_)
                 : CollisionFeature(line, anchor,
                         shapedText.top, shapedText.bottom, shapedText.left, shapedText.right,
-                        boxScale, padding, alongLine, false) {}
+                        boxScale, padding, alongLine, indexedFeature_, false) {}
 
             // for icons
             inline explicit CollisionFeature(const GeometryCoordinates &line, const Anchor &anchor,
                     const PositionedIcon &shapedIcon,
-                    const float boxScale, const float padding, const bool alongLine)
+                    const float boxScale, const float padding, const bool alongLine, const IndexedSubfeature& indexedFeature_)
                 : CollisionFeature(line, anchor,
                         shapedIcon.top, shapedIcon.bottom, shapedIcon.left, shapedIcon.right,
-                        boxScale, padding, alongLine, true) {}
+                        boxScale, padding, alongLine, indexedFeature_, true) {}
 
             explicit CollisionFeature(const GeometryCoordinates &line, const Anchor &anchor,
                     const float top, const float bottom, const float left, const float right,
-                    const float boxScale, const float padding, const bool alongLine, const bool straight);
+                    const float boxScale, const float padding, const bool alongLine,
+                    const IndexedSubfeature&, const bool straight);
 
 
             std::vector<CollisionBox> boxes;
+            IndexedSubfeature indexedFeature;
 
         private:
-            void bboxifyLabel(const GeometryCoordinates &line, GeometryCoordinate &anchorPoint, const int segment, const float length, const float height);
+            void bboxifyLabel(const GeometryCoordinates &line, GeometryCoordinate &anchorPoint,
+                    const int segment, const float length, const float height);
     };
 } // namespace mbgl
-
-#endif

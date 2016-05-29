@@ -5,7 +5,7 @@ import android.support.annotation.UiThread;
 
 import com.mapbox.mapboxsdk.constants.MyBearingTracking;
 import com.mapbox.mapboxsdk.constants.MyLocationTracking;
-import com.mapbox.mapboxsdk.maps.widgets.UserLocationView;
+import com.mapbox.mapboxsdk.maps.widgets.MyLocationView;
 
 /**
  * Settings for the user location and bearing tracking of a MapboxMap.
@@ -14,13 +14,14 @@ public class TrackingSettings {
 
     private MapView mapView;
     private UiSettings uiSettings;
-    private boolean dismissTrackingOnGesture = true;
+    private boolean dismissLocationTrackingOnGesture = true;
+    private boolean dismissBearingTrackingOnGesture = true;
 
     @MyLocationTracking.Mode
-    private int mMyLocationTrackingMode;
+    private int myLocationTrackingMode;
 
     @MyBearingTracking.Mode
-    private int mMyBearingTrackingMode;
+    private int myBearingTrackingMode;
 
     TrackingSettings(@NonNull MapView mapView, UiSettings uiSettings) {
         this.mapView = mapView;
@@ -42,9 +43,9 @@ public class TrackingSettings {
      */
     @UiThread
     public void setMyLocationTrackingMode(@MyLocationTracking.Mode int myLocationTrackingMode) {
-        mMyLocationTrackingMode = myLocationTrackingMode;
+        this.myLocationTrackingMode = myLocationTrackingMode;
         mapView.setMyLocationTrackingMode(myLocationTrackingMode);
-        validateGesturesForTrackingModes();
+        validateGesturesForLocationTrackingMode();
     }
 
     /**
@@ -57,7 +58,7 @@ public class TrackingSettings {
     @UiThread
     @MyLocationTracking.Mode
     public int getMyLocationTrackingMode() {
-        return mMyLocationTrackingMode;
+        return myLocationTrackingMode;
     }
 
     /**
@@ -66,7 +67,7 @@ public class TrackingSettings {
      * </p>
      * Shows the direction the user is heading.
      * <p>
-     * When location tracking is disabled the direction of {@link UserLocationView}  is rotated
+     * When location tracking is disabled the direction of {@link MyLocationView}  is rotated
      * When location tracking is enabled the {@link MapView} is rotated based on bearing value.
      * </p>
      * See {@link MyBearingTracking} for different values.
@@ -77,8 +78,9 @@ public class TrackingSettings {
      */
     @UiThread
     public void setMyBearingTrackingMode(@MyBearingTracking.Mode int myBearingTrackingMode) {
-        mMyBearingTrackingMode = myBearingTrackingMode;
+        this.myBearingTrackingMode = myBearingTrackingMode;
         mapView.setMyBearingTrackingMode(myBearingTrackingMode);
+        validateGesturesForBearingTrackingMode();
     }
 
     /**
@@ -89,52 +91,137 @@ public class TrackingSettings {
      * @see MyBearingTracking
      */
     @UiThread
-    @MyLocationTracking.Mode
+    @MyBearingTracking.Mode
     public int getMyBearingTrackingMode() {
-        return mMyBearingTrackingMode;
+        return myBearingTrackingMode;
     }
 
     /**
      * Returns if the tracking modes will be dismissed when a gesture occurs.
      *
      * @return True to indicate the tracking modes will be dismissed.
-     */
+     * @deprecated use @link #isAllDismissTrackingOnGestureinstead
+    */
+    @Deprecated
     public boolean isDismissTrackingOnGesture() {
-        return dismissTrackingOnGesture;
+        return dismissLocationTrackingOnGesture && dismissBearingTrackingOnGesture;
+    }
+
+    /**
+     * Returns if all tracking modes will be dismissed when a gesture occurs.
+     *
+     * @return True to indicate that location and bearing tracking will be dismissed.
+     */
+    public boolean isAllDismissTrackingOnGesture() {
+        return dismissLocationTrackingOnGesture && dismissBearingTrackingOnGesture;
     }
 
     /**
      * Set the dismissal of the tracking modes if a gesture occurs.
      *
      * @param dismissTrackingOnGesture True to dismiss the tracking modes.
+     * @deprecated use @link #setDismissAllTrackingOnGesture instead
      */
+    @Deprecated
     public void setDismissTrackingOnGesture(boolean dismissTrackingOnGesture) {
-        this.dismissTrackingOnGesture = dismissTrackingOnGesture;
-        validateGesturesForTrackingModes();
-    }
-
-    private void validateGesturesForTrackingModes() {
-        if (!dismissTrackingOnGesture) {
-            int myLocationTrackingMode = getMyLocationTrackingMode();
-            int myBearingTrackingMode = getMyBearingTrackingMode();
-
-            // Enable/disable gestures based on tracking mode
-            if (myLocationTrackingMode == MyLocationTracking.TRACKING_NONE) {
-                uiSettings.setScrollGesturesEnabled(true);
-                uiSettings.setRotateGesturesEnabled(true);
-            } else {
-                uiSettings.setScrollGesturesEnabled(false);
-                uiSettings.setRotateGesturesEnabled((myBearingTrackingMode == MyBearingTracking.NONE));
-            }
-        }
+        setDismissAllTrackingOnGesture(dismissTrackingOnGesture);
     }
 
     /**
-     * Return if location tracking is disabled
+     * Set the dismissal of the tracking modes if a gesture occurs.
+     *
+     * @param dismissTrackingOnGesture True to dismiss all the tracking modes.
+     */
+    public void setDismissAllTrackingOnGesture(boolean dismissTrackingOnGesture) {
+        dismissLocationTrackingOnGesture = dismissTrackingOnGesture;
+        dismissBearingTrackingOnGesture = dismissTrackingOnGesture;
+        validateAllGesturesForTrackingModes();
+    }
+
+    /**
+     * Set the dismissal of the tracking modes if a gesture occurs.
+     *
+     * @param dismissLocationTrackingOnGesture True to dismiss the location tracking mode.
+     */
+    public void setDismissLocationTrackingOnGesture(boolean dismissLocationTrackingOnGesture) {
+        this.dismissLocationTrackingOnGesture = dismissLocationTrackingOnGesture;
+        validateGesturesForLocationTrackingMode();
+    }
+
+    /**
+     * Returns if the location tracking will be disabled when a gesture occurs
+     *
+     * @return True if location tracking will be disabled.
+     */
+    public boolean isDismissLocationTrackingOnGesture() {
+        return dismissLocationTrackingOnGesture;
+    }
+
+    /**
+     * Set the dismissal of the bearing tracking modes if a gesture occurs.
+     *
+     * @param dismissBearingTrackingOnGesture True to dimsiss the bearinf tracking mode
+     */
+    public void setDismissBearingTrackingOnGesture(boolean dismissBearingTrackingOnGesture) {
+        this.dismissBearingTrackingOnGesture = dismissBearingTrackingOnGesture;
+        validateGesturesForBearingTrackingMode();
+    }
+
+    /**
+     * Returns if bearing will disabled when a gesture occurs
+     *
+     * @return True if bearing tracking will be disabled
+     */
+    public boolean isDismissBearingTrackingOnGesture() {
+        return dismissBearingTrackingOnGesture;
+    }
+
+    /**
+     * Returns if location tracking is disabled
      *
      * @return True if location tracking is disabled.
      */
     public boolean isLocationTrackingDisabled() {
-        return mMyLocationTrackingMode == MyLocationTracking.TRACKING_NONE;
+        return myLocationTrackingMode == MyLocationTracking.TRACKING_NONE;
+    }
+
+    /**
+     * Retyrns uf bearing tracking is disabled
+     *
+     * @return True if bearing tracking will be disabled.
+     */
+    public boolean isBearingTrackingDisabled() {
+        return myBearingTrackingMode == MyBearingTracking.NONE;
+    }
+
+    private void validateAllGesturesForTrackingModes() {
+        validateGesturesForBearingTrackingMode();
+        validateGesturesForLocationTrackingMode();
+    }
+
+    private void validateGesturesForLocationTrackingMode() {
+        int myLocationTrackingMode = getMyLocationTrackingMode();
+        if (!dismissLocationTrackingOnGesture) {
+            if (myLocationTrackingMode == MyLocationTracking.TRACKING_NONE) {
+                uiSettings.setScrollGesturesEnabled(true);
+            } else {
+                uiSettings.setScrollGesturesEnabled(false);
+            }
+        } else {
+            uiSettings.setScrollGesturesEnabled(true);
+        }
+    }
+
+    private void validateGesturesForBearingTrackingMode() {
+        int myBearingTrackingMode = getMyBearingTrackingMode();
+        if (!dismissBearingTrackingOnGesture) {
+            if (myBearingTrackingMode == MyBearingTracking.NONE) {
+                uiSettings.setRotateGesturesEnabled(true);
+            } else {
+                uiSettings.setRotateGesturesEnabled(false);
+            }
+        } else {
+            uiSettings.setRotateGesturesEnabled(true);
+        }
     }
 }

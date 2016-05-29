@@ -14,11 +14,21 @@ import com.mapbox.mapboxsdk.telemetry.TelemetryLocationReceiver;
 import com.mapzen.android.lost.api.LocationRequest;
 import com.mapzen.android.lost.api.LostApiClient;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Manages locational updates. Contains methods to register and unregister location listeners.
+ * <p>
+ * <ul>
+ * <li>You can register a {@link LocationListener} with {@link #addLocationListener(LocationListener)} to receive location updates.</li>
+ * <li> You can unregister a {@link LocationListener} with {@link #removeLocationListener(LocationListener)}.</li>
+ * </ul>
+ * <p/>
+ * <p>
+ * Note: If registering a listener in your Activity.onResume() implementation, you should unregister it in Activity.onPause().
+ * (You won't receive location updates when paused, and this will cut down on unnecessary system overhead).
+ * Do not unregister in Activity.onSaveInstanceState(), because this won't be called if the user moves back in the history stack.
+ * </p>
  */
 public class LocationServices implements com.mapzen.android.lost.api.LocationListener {
 
@@ -30,7 +40,7 @@ public class LocationServices implements com.mapzen.android.lost.api.LocationLis
     private LostApiClient locationClient;
     private Location lastLocation;
 
-    private List<LocationListener> locationListeners;
+    private CopyOnWriteArrayList<LocationListener> locationListeners;
 
     private boolean isGPSEnabled;
 
@@ -42,7 +52,7 @@ public class LocationServices implements com.mapzen.android.lost.api.LocationLis
         this.context = context;
         // Setup location services
         locationClient = new LostApiClient.Builder(context).build();
-        locationListeners = new ArrayList<>();
+        locationListeners = new CopyOnWriteArrayList<>();
     }
 
     /**
@@ -64,8 +74,7 @@ public class LocationServices implements com.mapzen.android.lost.api.LocationLis
      * @param enableGPS true if GPS is to be enabled, false if GPS is to be disabled
      */
     public void toggleGPS(boolean enableGPS) {
-        if ((ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) &&
-                (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)) {
+        if (!areLocationPermissionsGranted()) {
             Log.w(TAG, "Location Permissions Not Granted Yet.  Try again after requesting.");
             return;
         }
@@ -123,7 +132,7 @@ public class LocationServices implements com.mapzen.android.lost.api.LocationLis
      */
     @Override
     public void onLocationChanged(Location location) {
-        Log.d(TAG, "onLocationChanged()..." + location);
+//        Log.d(TAG, "onLocationChanged()..." + location);
         this.lastLocation = location;
 
         // Update Listeners
@@ -165,5 +174,18 @@ public class LocationServices implements com.mapzen.android.lost.api.LocationLis
      */
     public boolean removeLocationListener(@NonNull LocationListener locationListener) {
         return this.locationListeners.remove(locationListener);
+    }
+
+    /**
+     * Check status of Location Permissions
+     * @return True if granted to the app, False if not
+     */
+    public boolean areLocationPermissionsGranted() {
+        if ((ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) &&
+                (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)) {
+            Log.w(TAG, "Location Permissions Not Granted Yet.  Try again after requesting.");
+            return false;
+        }
+        return true;
     }
 }

@@ -1,5 +1,4 @@
-#ifndef MBGL_SYMBOL_LAYER
-#define MBGL_SYMBOL_LAYER
+#pragma once
 
 #include <mbgl/style/style_layer.hpp>
 #include <mbgl/style/layout_property.hpp>
@@ -11,75 +10,58 @@ class SpriteAtlas;
 
 class SymbolLayoutProperties {
 public:
-    LayoutProperty<PlacementType> placement { PlacementType::Point };
-    LayoutProperty<float> spacing { 250.0f };
-    LayoutProperty<bool> avoidEdges { false };
+    LayoutProperty<SymbolPlacementType> symbolPlacement { SymbolPlacementType::Point };
+    LayoutProperty<float> symbolSpacing { 250.0f };
+    LayoutProperty<bool> symbolAvoidEdges { false };
 
-    class IconProperties {
-    public:
-        LayoutProperty<bool> allowOverlap { false };
-        LayoutProperty<bool> ignorePlacement { false };
-        LayoutProperty<bool> optional { false };
-        LayoutProperty<RotationAlignmentType> rotationAlignment { RotationAlignmentType::Viewport };
-        LayoutProperty<float> size { 1.0f };
-        LayoutProperty<std::string> image { "" };
-        LayoutProperty<float> rotate { 0.0f };
-        LayoutProperty<float> padding { 2.0f };
-        LayoutProperty<bool> keepUpright { false };
-        LayoutProperty<std::array<float, 2>> offset { {{ 0, 0 }} };
-    } icon;
+    LayoutProperty<bool> iconAllowOverlap { false };
+    LayoutProperty<bool> iconIgnorePlacement { false };
+    LayoutProperty<bool> iconOptional { false };
+    LayoutProperty<RotationAlignmentType> iconRotationAlignment { RotationAlignmentType::Viewport };
+    LayoutProperty<float> iconSize { 1.0f };
+    LayoutProperty<std::string> iconImage { "" };
+    LayoutProperty<float> iconRotate { 0.0f };
+    LayoutProperty<float> iconPadding { 2.0f };
+    LayoutProperty<bool> iconKeepUpright { false };
+    LayoutProperty<std::array<float, 2>> iconOffset { {{ 0, 0 }} };
 
-    class TextProperties {
-    public:
-        LayoutProperty<RotationAlignmentType> rotationAlignment { RotationAlignmentType::Viewport };
-        LayoutProperty<std::string> field { "" };
-        LayoutProperty<std::string> font { "Open Sans Regular, Arial Unicode MS Regular" };
-        LayoutProperty<float> size { 16.0f };
-        LayoutProperty<float> maxWidth { 15.0f /* em */ };
-        LayoutProperty<float> lineHeight { 1.2f /* em */ };
-        LayoutProperty<float> letterSpacing { 0.0f /* em */ };
-        LayoutProperty<TextJustifyType> justify { TextJustifyType::Center };
-        LayoutProperty<TextAnchorType> anchor { TextAnchorType::Center };
-        LayoutProperty<float> maxAngle { 45.0f /* degrees */ };
-        LayoutProperty<float> rotate { 0.0f };
-        LayoutProperty<float> padding { 2.0f };
-        LayoutProperty<bool> keepUpright { true };
-        LayoutProperty<TextTransformType> transform { TextTransformType::None };
-        LayoutProperty<std::array<float, 2>> offset { {{ 0, 0 }} };
-        LayoutProperty<bool> allowOverlap { false };
-        LayoutProperty<bool> ignorePlacement { false };
-        LayoutProperty<bool> optional { false };
-    } text;
-
-    // Special case.
-    float iconMaxSize = 1.0f;
-    float textMaxSize = 16.0f;
+    LayoutProperty<RotationAlignmentType> textRotationAlignment { RotationAlignmentType::Viewport };
+    LayoutProperty<std::string> textField { "" };
+    LayoutProperty<std::vector<std::string>> textFont { { "Open Sans Regular", "Arial Unicode MS Regular" } };
+    LayoutProperty<float> textSize { 16.0f };
+    LayoutProperty<float> textMaxWidth { 10.0f /* em */ };
+    LayoutProperty<float> textLineHeight { 1.2f /* em */ };
+    LayoutProperty<float> textLetterSpacing { 0.0f /* em */ };
+    LayoutProperty<TextJustifyType> textJustify { TextJustifyType::Center };
+    LayoutProperty<TextAnchorType> textAnchor { TextAnchorType::Center };
+    LayoutProperty<float> textMaxAngle { 45.0f /* degrees */ };
+    LayoutProperty<float> textRotate { 0.0f };
+    LayoutProperty<float> textPadding { 2.0f };
+    LayoutProperty<bool> textKeepUpright { true };
+    LayoutProperty<TextTransformType> textTransform { TextTransformType::None };
+    LayoutProperty<std::array<float, 2>> textOffset { {{ 0, 0 }} };
+    LayoutProperty<bool> textAllowOverlap { false };
+    LayoutProperty<bool> textIgnorePlacement { false };
+    LayoutProperty<bool> textOptional { false };
 };
 
 class SymbolPaintProperties {
 public:
-    class PaintProperties {
-    public:
-        PaintProperties(float size_) : size(size_) {}
+    PaintProperty<float> iconOpacity { 1.0f };
+    PaintProperty<Color> iconColor { {{ 0, 0, 0, 1 }} };
+    PaintProperty<Color> iconHaloColor { {{ 0, 0, 0, 0 }} };
+    PaintProperty<float> iconHaloWidth { 0.0f };
+    PaintProperty<float> iconHaloBlur { 0.0f };
+    PaintProperty<std::array<float, 2>> iconTranslate { {{ 0, 0 }} };
+    PaintProperty<TranslateAnchorType> iconTranslateAnchor { TranslateAnchorType::Map };
 
-        PaintProperty<float> opacity { 1.0f };
-        PaintProperty<Color> color { {{ 0, 0, 0, 1 }} };
-        PaintProperty<Color> haloColor { {{ 0, 0, 0, 0 }} };
-        PaintProperty<float> haloWidth { 0.0f };
-        PaintProperty<float> haloBlur { 0.0f };
-        PaintProperty<std::array<float, 2>> translate { {{ 0, 0 }} };
-        PaintProperty<TranslateAnchorType> translateAnchor { TranslateAnchorType::Map };
-
-        // Special case
-        float size;
-
-        bool isVisible() const {
-            return opacity > 0 && (color.value[3] > 0 || haloColor.value[3] > 0) && size > 0;
-        }
-    };
-
-    PaintProperties icon { 1.0f };
-    PaintProperties text { 16.0f };
+    PaintProperty<float> textOpacity { 1.0f };
+    PaintProperty<Color> textColor { {{ 0, 0, 0, 1 }} };
+    PaintProperty<Color> textHaloColor { {{ 0, 0, 0, 0 }} };
+    PaintProperty<float> textHaloWidth { 0.0f };
+    PaintProperty<float> textHaloBlur { 0.0f };
+    PaintProperty<std::array<float, 2>> textTranslate { {{ 0, 0 }} };
+    PaintProperty<TranslateAnchorType> textTranslateAnchor { TranslateAnchorType::Map };
 };
 
 class SymbolLayer : public StyleLayer {
@@ -98,6 +80,9 @@ public:
     SymbolLayoutProperties layout;
     SymbolPaintProperties paint;
 
+    float iconSize = 1.0f;
+    float textSize = 16.0f;
+
     SpriteAtlas* spriteAtlas = nullptr;
 };
 
@@ -107,5 +92,3 @@ inline bool StyleLayer::is<SymbolLayer>() const {
 }
 
 } // namespace mbgl
-
-#endif

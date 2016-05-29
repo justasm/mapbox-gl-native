@@ -5,7 +5,9 @@ namespace mbgl {
 
 CollisionFeature::CollisionFeature(const GeometryCoordinates &line, const Anchor &anchor,
         const float top, const float bottom, const float left, const float right,
-        const float boxScale, const float padding, const bool alongLine, const bool straight) {
+        const float boxScale, const float padding, const bool alongLine, const IndexedSubfeature& indexedFeature_,
+        const bool straight)
+        : indexedFeature(indexedFeature_) {
 
     if (top == 0 && bottom == 0 && left == 0 && right == 0) return;
 
@@ -16,17 +18,17 @@ CollisionFeature::CollisionFeature(const GeometryCoordinates &line, const Anchor
 
     if (alongLine) {
         float height = y2 - y1;
-        const float length = x2 - x1;
+        const double length = x2 - x1;
 
         if (height <= 0.0f) return;
 
         height = std::max(10.0f * boxScale, height);
 
-        GeometryCoordinate anchorPoint(int16_t(anchor.x), int16_t(anchor.y));
+        GeometryCoordinate anchorPoint = convertPoint<int16_t>(anchor.point);
 
         if (straight) {
             // used for icon labels that are aligned with the line, but don't curve along it
-            const vec2<double> vector = util::unit(vec2<double>(line[anchor.segment + 1] - line[anchor.segment])) * length;
+            const GeometryCoordinate vector = convertPoint<int16_t>(util::unit(convertPoint<double>(line[anchor.segment + 1] - line[anchor.segment])) * length);
             const GeometryCoordinates newLine({ anchorPoint - vector, anchorPoint + vector });
             bboxifyLabel(newLine, anchorPoint, 0, length, height);
         } else {
@@ -34,7 +36,7 @@ CollisionFeature::CollisionFeature(const GeometryCoordinates &line, const Anchor
             bboxifyLabel(line, anchorPoint, anchor.segment, length, height);
         }
     } else {
-        boxes.emplace_back(anchor, x1, y1, x2, y2, std::numeric_limits<float>::infinity());
+        boxes.emplace_back(anchor.point, x1, y1, x2, y2, std::numeric_limits<float>::infinity());
     }
 }
 
@@ -87,7 +89,7 @@ void CollisionFeature::bboxifyLabel(const GeometryCoordinates &line,
         const auto& p0 = line[index];
         const auto& p1 = line[index + 1];
 
-        vec2<float> boxAnchor = {
+        Point<float> boxAnchor = {
             p0.x + segmentBoxDistance / segmentLength * (p1.x - p0.x),
             p0.y + segmentBoxDistance / segmentLength * (p1.y - p0.y)
         };

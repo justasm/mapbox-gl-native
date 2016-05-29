@@ -1,8 +1,8 @@
-#ifndef MBGL_MAP_TRANSFORM
-#define MBGL_MAP_TRANSFORM
+#pragma once
 
 #include <mbgl/map/camera.hpp>
 #include <mbgl/map/mode.hpp>
+#include <mbgl/map/change.hpp>
 #include <mbgl/map/transform_state.hpp>
 #include <mbgl/map/update.hpp>
 #include <mbgl/util/chrono.hpp>
@@ -16,16 +16,18 @@
 
 namespace mbgl {
 
-class View;
-
 class Transform : private util::noncopyable {
 public:
-    Transform(View&, ConstrainMode);
+    Transform(std::function<void(MapChange)> = nullptr,
+              ConstrainMode = ConstrainMode::HeightOnly,
+              ViewportMode = ViewportMode::Default);
 
     // Map view
     bool resize(std::array<uint16_t, 2> size);
 
     // Camera
+    /** Returns the current camera options. */
+    CameraOptions getCameraOptions(optional<EdgeInsets>) const;
     
     /** Instantaneously, synchronously applies the given camera options. */
     void jumpTo(const CameraOptions&);
@@ -130,10 +132,14 @@ public:
     // North Orientation
     void setNorthOrientation(NorthOrientation);
     NorthOrientation getNorthOrientation() const;
-    
+
     // Constrain mode
     void setConstrainMode(ConstrainMode);
     ConstrainMode getConstrainMode() const;
+
+    // Viewport mode
+    void setViewportMode(ViewportMode);
+    ViewportMode getViewportMode() const;
 
     // Transitions
     bool inTransition() const;
@@ -147,7 +153,7 @@ public:
     bool isGestureInProgress() const { return state.isGestureInProgress(); }
 
     // Transform state
-    TransformState getState() const { return state; }
+    const TransformState& getState() const { return state; }
     bool isRotating() const { return state.isRotating(); }
     bool isScaling() const { return state.isScaling(); }
     bool isPanning() const { return state.isPanning(); }
@@ -157,7 +163,7 @@ public:
     LatLng screenCoordinateToLatLng(const ScreenCoordinate&) const;
 
 private:
-    View &view;
+    std::function<void(MapChange)> callback;
 
     TransformState state;
 
@@ -173,5 +179,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

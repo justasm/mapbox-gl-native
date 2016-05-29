@@ -1,8 +1,10 @@
 package com.mapbox.mapboxsdk.geometry;
 
-import com.mapbox.mapboxsdk.exceptions.InvalidLatLngBoundsException;
+import android.os.Parcelable;
 
-import org.junit.Assert;
+import com.mapbox.mapboxsdk.exceptions.InvalidLatLngBoundsException;
+import com.mapbox.mapboxsdk.utils.MockParcel;
+
 import org.junit.Before;
 import org.junit.Test;
 
@@ -100,12 +102,12 @@ public class LatLngBoundsTest {
 
     @Test
     public void testIncluding() {
-        assertTrue("LatLng should be included", mLatLngBounds.including(new LatLng(1, 1)));
+        assertTrue("LatLng should be included", mLatLngBounds.contains(new LatLng(1, 1)));
     }
 
     @Test
     public void testNoIncluding() {
-        assertFalse("LatLng should not be included", mLatLngBounds.including(new LatLng(3, 1)));
+        assertFalse("LatLng should not be included", mLatLngBounds.contains(new LatLng(3, 1)));
     }
 
     @Test
@@ -169,5 +171,13 @@ public class LatLngBoundsTest {
                         .build());
     }
 
-
+    @Test
+    public void testParcelable() {
+        LatLngBounds latLngBounds = new LatLngBounds.Builder()
+                .include(new LatLng(10, 10))
+                .include(new LatLng(9, 8))
+                .build();
+        Parcelable parcel = MockParcel.obtain(latLngBounds);
+        assertEquals("Parcel should match original object", parcel, latLngBounds);
+    }
 }

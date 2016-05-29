@@ -1,5 +1,6 @@
-#ifndef MBGL_MAP_UPDATE
-#define MBGL_MAP_UPDATE
+#pragma once
+
+#include <mbgl/util/traits.hpp>
 
 #include <cstdint>
 
@@ -16,7 +17,7 @@ enum class Update : uint8_t {
 };
 
 inline Update operator| (const Update& lhs, const Update& rhs) {
-    return Update(static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+    return Update(mbgl::underlying_type(lhs) | mbgl::underlying_type(rhs));
 }
 
 inline Update& operator|=(Update& lhs, const Update& rhs) {
@@ -25,9 +26,7 @@ inline Update& operator|=(Update& lhs, const Update& rhs) {
 }
 
 inline bool operator& (const Update& lhs, const Update& rhs) {
-    return static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs);
+    return mbgl::underlying_type(lhs) & mbgl::underlying_type(rhs);
 }
 
 } // namespace mbgl
-
-#endif // MBGL_MAP_UPDATE

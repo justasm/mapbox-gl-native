@@ -1,16 +1,9 @@
-#ifndef MBGL_STYLE_FUNCTION
-#define MBGL_STYLE_FUNCTION
-
-#include <mbgl/style/types.hpp>
-#include <mbgl/util/chrono.hpp>
-#include <mbgl/util/optional.hpp>
+#pragma once
 
 #include <vector>
 #include <utility>
 
 namespace mbgl {
-
-class StyleCalculationParameters;
 
 template <typename T>
 class Function {
@@ -18,14 +11,11 @@ public:
     using Stop = std::pair<float, T>;
     using Stops = std::vector<Stop>;
 
-    // TODO: make explicit
-    /* explicit */ Function(const T& constant)
+    explicit Function(const T& constant)
         : stops({{ 0, constant }}) {}
 
     explicit Function(const Stops& stops_, float base_)
         : base(base_), stops(stops_) {}
-
-    T evaluate(const StyleCalculationParameters&) const;
 
     float getBase() const { return base; }
     const std::vector<std::pair<float, T>>& getStops() const { return stops; }
@@ -35,26 +25,4 @@ private:
     std::vector<std::pair<float, T>> stops;
 };
 
-// Partial specialization for cross-faded properties (*-pattern, line-dasharray).
-template <typename T>
-class Function<Faded<T>> {
-public:
-    using Stop = std::pair<float, T>;
-    using Stops = std::vector<Stop>;
-
-    // TODO: make explicit
-    /* explicit */ Function(const T& constant)
-        : stops({{ 0, constant }}) {}
-
-    explicit Function(const Stops& stops_)
-        : stops(stops_) {}
-
-    Faded<T> evaluate(const StyleCalculationParameters&) const;
-
-private:
-    std::vector<std::pair<float, T>> stops;
-};
-
 } // namespace mbgl
-
-#endif

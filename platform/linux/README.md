@@ -8,12 +8,12 @@ This process gives you a Linux desktop app built on a Linux host system.
 
 ### Build
 
-Install GCC 4.9+ if you are running Ubuntu 14.04 or older. Alternatively, you can also use [Clang 3.5+](http://llvm.org/apt/).
+Install GCC 5+ if you are running Ubuntu 14.04 or older. Alternatively, you can also use [Clang 3.5+](http://llvm.org/apt/).
 
     sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
     sudo apt-get update
-    sudo apt-get install gcc-4.9 g++-4.9
-    export CXX=g++-4.9
+    sudo apt-get install gcc-5 g++-5
+    export CXX=g++-5
 
 Ensure you have git and other build essentials:
 
@@ -33,14 +33,13 @@ Set the environment variable `MAPBOX_ACCESS_TOKEN` to your [Mapbox access token]
 
     export MAPBOX_ACCESS_TOKEN=MYTOKEN
 
-Then, you can then proceed to build the library:
+Then, you can then proceed to build the test application:
 
-    git submodule update --init
-    make linux
+    make glfw-app
 
 Set an access token as described below, and then run:
 
-    make run-linux
+    make run-glfw-app
 
 ### Test
 

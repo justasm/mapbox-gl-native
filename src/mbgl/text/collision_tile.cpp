@@ -1,5 +1,8 @@
 #include <mbgl/text/collision_tile.hpp>
+#include <mbgl/geometry/feature_index.hpp>
 #include <mbgl/util/constants.hpp>
+#include <mbgl/util/math.hpp>
+
 #include <cmath>
 
 namespace mbgl {
@@ -9,13 +12,13 @@ auto infinity = std::numeric_limits<float>::infinity();
 CollisionTile::CollisionTile(PlacementConfig config_) : config(config_),
     edges({{
         // left
-        CollisionBox(vec2<float>(0, 0), 0, -infinity, 0, infinity, infinity),
+        CollisionBox(Point<float>(0, 0), 0, -infinity, 0, infinity, infinity),
         // right
-        CollisionBox(vec2<float>(util::EXTENT, 0), 0, -infinity, 0, infinity, infinity),
+        CollisionBox(Point<float>(util::EXTENT, 0), 0, -infinity, 0, infinity, infinity),
         // top
-        CollisionBox(vec2<float>(0, 0), -infinity, 0, infinity, 0, infinity),
+        CollisionBox(Point<float>(0, 0), -infinity, 0, infinity, 0, infinity),
         // bottom
-        CollisionBox(vec2<float>(0, util::EXTENT), -infinity, 0, infinity, 0, infinity),
+        CollisionBox(Point<float>(0, util::EXTENT), -infinity, 0, infinity, 0, infinity),
     }}) {
     tree.clear();
 
@@ -34,8 +37,8 @@ CollisionTile::CollisionTile(PlacementConfig config_) : config(config_),
 }
 
 
-float CollisionTile::findPlacementScale(float minPlacementScale, const vec2<float>& anchor,
-        const CollisionBox& box, const vec2<float>& blockingAnchor, const CollisionBox& blocking) {
+float CollisionTile::findPlacementScale(float minPlacementScale, const Point<float>& anchor,
+        const CollisionBox& box, const Point<float>& blockingAnchor, const CollisionBox& blocking) {
 
 
     // Find the lowest scale at which the two boxes can fit side by side without overlapping.
@@ -74,20 +77,17 @@ float CollisionTile::findPlacementScale(float minPlacementScale, const vec2<floa
     return minPlacementScale;
 }
 
-float CollisionTile::placeFeature(const CollisionFeature &feature, const bool allowOverlap, const bool avoidEdges) {
+float CollisionTile::placeFeature(const CollisionFeature& feature, const bool allowOverlap, const bool avoidEdges) {
 
     float minPlacementScale = minScale;
 
     for (auto& box : feature.boxes) {
-        const auto anchor = box.anchor.matMul(rotationMatrix);
+        const auto anchor = util::matrixMultiply(rotationMatrix, box.anchor);
 
         if (!allowOverlap) {
-            std::vector<CollisionTreeBox> blockingBoxes;
-            tree.query(bgi::intersects(getTreeBox(anchor, box)), std::back_inserter(blockingBoxes));
-
-            for (auto& blockingTreeBox : blockingBoxes) {
-                const auto& blocking = std::get<1>(blockingTreeBox);
-                auto blockingAnchor = blocking.anchor.matMul(rotationMatrix);
+            for (auto it = tree.qbegin(bgi::intersects(getTreeBox(anchor, box))); it != tree.qend(); ++it) {
+                const CollisionBox& blocking = std::get<1>(*it);
+                Point<float> blockingAnchor = util::matrixMultiply(rotationMatrix, blocking.anchor);
 
                 minPlacementScale = findPlacementScale(minPlacementScale, anchor, box, blockingAnchor, blocking);
                 if (minPlacementScale >= maxScale) return minPlacementScale;
@@ -95,14 +95,14 @@ float CollisionTile::placeFeature(const CollisionFeature &feature, const bool al
         }
 
         if (avoidEdges) {
-            const vec2<float> tl = { box.x1, box.y1 };
-            const vec2<float> tr = { box.x2, box.y1 };
-            const vec2<float> bl = { box.x1, box.y2 };
-            const vec2<float> br = { box.x2, box.y2 };
-            const vec2<float> rtl = tl.matMul(reverseRotationMatrix);
-            const vec2<float> rtr = tr.matMul(reverseRotationMatrix);
-            const vec2<float> rbl = bl.matMul(reverseRotationMatrix);
-            const vec2<float> rbr = br.matMul(reverseRotationMatrix);
+            const Point<float> tl = { box.x1, box.y1 };
+            const Point<float> tr = { box.x2, box.y1 };
+            const Point<float> bl = { box.x1, box.y2 };
+            const Point<float> br = { box.x2, box.y2 };
+            const Point<float> rtl = util::matrixMultiply(reverseRotationMatrix, tl);
+            const Point<float> rtr = util::matrixMultiply(reverseRotationMatrix, tr);
+            const Point<float> rbl = util::matrixMultiply(reverseRotationMatrix, bl);
+            const Point<float> rbr = util::matrixMultiply(reverseRotationMatrix, br);
             CollisionBox rotatedBox(box.anchor,
                     ::fmin(::fmin(rtl.x, rtr.x), ::fmin(rbl.x, rbr.x)),
                     ::fmin(::fmin(rtl.y, rtr.y), ::fmin(rbl.y, rbr.y)),
@@ -121,7 +121,7 @@ float CollisionTile::placeFeature(const CollisionFeature &feature, const bool al
     return minPlacementScale;
 }
 
-void CollisionTile::insertFeature(CollisionFeature &feature, const float minPlacementScale) {
+void CollisionTile::insertFeature(CollisionFeature& feature, const float minPlacementScale, const bool ignorePlacement) {
     for (auto& box : feature.boxes) {
         box.placementScale = minPlacementScale;
     }
@@ -129,24 +129,60 @@ void CollisionTile::insertFeature(CollisionFeature &feature, const float minPlac
     if (minPlacementScale < maxScale) {
         std::vector<CollisionTreeBox> treeBoxes;
         for (auto& box : feature.boxes) {
-            treeBoxes.emplace_back(getTreeBox(box.anchor.matMul(rotationMatrix), box), box);
+            treeBoxes.emplace_back(getTreeBox(util::matrixMultiply(rotationMatrix, box.anchor), box), box, feature.indexedFeature);
         }
-        tree.insert(treeBoxes.begin(), treeBoxes.end());
+        if (ignorePlacement) {
+            ignoredTree.insert(treeBoxes.begin(), treeBoxes.end());
+        } else {
+            tree.insert(treeBoxes.begin(), treeBoxes.end());
+        }
     }
 
 }
 
-Box CollisionTile::getTreeBox(const vec2<float> &anchor, const CollisionBox &box) {
+Box CollisionTile::getTreeBox(const Point<float>& anchor, const CollisionBox& box, const float scale) {
     return Box{
         CollisionPoint{
-            anchor.x + box.x1,
-            anchor.y + box.y1 * yStretch
+            anchor.x + box.x1 / scale,
+            anchor.y + box.y1 / scale * yStretch
         },
         CollisionPoint{
-            anchor.x + box.x2,
-            anchor.y + box.y2 * yStretch
+            anchor.x + box.x2 / scale,
+            anchor.y + box.y2 / scale * yStretch
         }
     };
+}
+
+std::vector<IndexedSubfeature> CollisionTile::queryRenderedSymbols(const mapbox::geometry::box<int16_t>& box, const float scale) {
+
+    std::vector<IndexedSubfeature> result;
+    std::unordered_map<std::string, std::set<std::size_t>> sourceLayerFeatures;
+
+    auto anchor = util::matrixMultiply(rotationMatrix, convertPoint<float>(box.min));
+    CollisionBox queryBox(anchor, 0, 0, box.max.x - box.min.x, box.max.y - box.min.y, scale);
+    auto predicates = bgi::intersects(getTreeBox(anchor, queryBox));
+
+    auto fn = [&] (const Tree& tree_) {
+        for (auto it = tree_.qbegin(predicates); it != tree_.qend(); ++it) {
+            const CollisionBox& blocking = std::get<1>(*it);
+            const IndexedSubfeature& indexedFeature = std::get<2>(*it);
+
+            auto& seenFeatures = sourceLayerFeatures[indexedFeature.sourceLayerName];
+            if (seenFeatures.find(indexedFeature.index) == seenFeatures.end()) {
+                auto blockingAnchor = util::matrixMultiply(rotationMatrix, blocking.anchor);
+                float minPlacementScale = findPlacementScale(minScale, anchor, queryBox, blockingAnchor, blocking);
+                if (minPlacementScale >= scale) {
+                    seenFeatures.insert(indexedFeature.index);
+                    result.push_back(indexedFeature);
+                }
+            }
+        }
+    };
+
+    fn(tree);
+    fn(ignoredTree);
+
+    return result;
 }
 
 } // namespace mbgl

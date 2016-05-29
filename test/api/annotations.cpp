@@ -1,4 +1,5 @@
 #include <mbgl/test/util.hpp>
+#include <mbgl/test/stub_file_source.hpp>
 
 #include <mbgl/annotation/point_annotation.hpp>
 #include <mbgl/annotation/shape_annotation.hpp>
@@ -6,8 +7,8 @@
 #include <mbgl/map/map.hpp>
 #include <mbgl/platform/default/headless_display.hpp>
 #include <mbgl/platform/default/headless_view.hpp>
-#include <mbgl/storage/online_file_source.hpp>
 #include <mbgl/util/io.hpp>
+#include <mbgl/util/run_loop.hpp>
 
 #include <future>
 #include <vector>
@@ -29,9 +30,11 @@ void checkRendering(Map& map, const char * name) {
 } // end namespace
 
 TEST(Annotations, PointAnnotation) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
@@ -42,9 +45,11 @@ TEST(Annotations, PointAnnotation) {
 }
 
 TEST(Annotations, LineAnnotation) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
@@ -61,9 +66,11 @@ TEST(Annotations, LineAnnotation) {
 }
 
 TEST(Annotations, FillAnnotation) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
@@ -79,9 +86,11 @@ TEST(Annotations, FillAnnotation) {
 }
 
 TEST(Annotations, StyleSourcedShapeAnnotation) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/annotation.json"), "");
@@ -94,9 +103,11 @@ TEST(Annotations, StyleSourcedShapeAnnotation) {
 }
 
 TEST(Annotations, AddMultiple) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
@@ -111,9 +122,11 @@ TEST(Annotations, AddMultiple) {
 }
 
 TEST(Annotations, NonImmediateAdd) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
@@ -131,9 +144,11 @@ TEST(Annotations, NonImmediateAdd) {
 }
 
 TEST(Annotations, UpdateIcon) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
@@ -150,9 +165,11 @@ TEST(Annotations, UpdateIcon) {
 }
 
 TEST(Annotations, UpdatePoint) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
@@ -168,9 +185,11 @@ TEST(Annotations, UpdatePoint) {
 }
 
 TEST(Annotations, RemovePoint) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
@@ -185,9 +204,11 @@ TEST(Annotations, RemovePoint) {
 }
 
 TEST(Annotations, RemoveShape) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     AnnotationSegments segments = {{ {{ { 0, 0 }, { 45, 45 } }} }};
 
@@ -207,9 +228,11 @@ TEST(Annotations, RemoveShape) {
 }
 
 TEST(Annotations, ImmediateRemoveShape) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
     Map map(view, fileSource, MapMode::Still);
 
     map.removeAnnotation(map.addShapeAnnotation(ShapeAnnotation({}, {})));
@@ -219,9 +242,11 @@ TEST(Annotations, ImmediateRemoveShape) {
 }
 
 TEST(Annotations, SwitchStyle) {
+    util::RunLoop loop;
+
     auto display = std::make_shared<mbgl::HeadlessDisplay>();
     HeadlessView view(display, 1);
-    OnlineFileSource fileSource;
+    StubFileSource fileSource;
 
     Map map(view, fileSource, MapMode::Still);
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
@@ -233,4 +258,24 @@ TEST(Annotations, SwitchStyle) {
     map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
 
     checkRendering(map, "switch_style");
+}
+
+TEST(Annotations, QueryRenderedFeatures) {
+    util::RunLoop loop;
+
+    auto display = std::make_shared<mbgl::HeadlessDisplay>();
+    HeadlessView view(display, 1);
+    StubFileSource fileSource;
+
+    Map map(view, fileSource, MapMode::Still);
+    map.setStyleJSON(util::read_file("test/fixtures/api/empty.json"), "");
+    map.addAnnotationIcon("default_marker", namedMarker("default_marker.png"));
+    const LatLng latLng(0, 0);
+    map.addPointAnnotation(PointAnnotation(latLng, "default_marker"));
+
+    test::render(map);
+    
+    auto point = map.pixelForLatLng(latLng);
+    auto features = map.queryRenderedFeatures(point);
+    EXPECT_EQ(features.size(), 1);
 }

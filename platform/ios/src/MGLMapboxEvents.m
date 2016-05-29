@@ -122,12 +122,12 @@ const NSTimeInterval MGLFlushInterval = 180;
 @property (nonatomic) dispatch_queue_t debugLogSerialQueue;
 @property (nonatomic) MGLLocationManager *locationManager;
 @property (nonatomic) NSTimer *timer;
-@property (nonatomic) NSDate *lastInstanceIDRotationDate;
+@property (nonatomic) NSDate *instanceIDRotationDate;
+@property (nonatomic) NSDate *turnstileSendDate;
 
 @end
 
 @implementation MGLMapboxEvents {
-    id _userDefaultsObserver;
     NSString *_instanceID;
 }
 
@@ -136,7 +136,7 @@ const NSTimeInterval MGLFlushInterval = 180;
         NSBundle *bundle = [NSBundle mainBundle];
         NSNumber *accountTypeNumber = [bundle objectForInfoDictionaryKey:@"MGLMapboxAccountType"];
         [[NSUserDefaults standardUserDefaults] registerDefaults:@{
-             @"MGLMapboxAccountType": accountTypeNumber ? accountTypeNumber : @0,
+             @"MGLMapboxAccountType": accountTypeNumber ?: @0,
              @"MGLMapboxMetricsEnabled": @YES,
              @"MGLMapboxMetricsDebugLoggingEnabled": @NO,
          }];
@@ -144,8 +144,12 @@ const NSTimeInterval MGLFlushInterval = 180;
 }
 
 + (BOOL)isEnabled {
+#if TARGET_OS_SIMULATOR
+    return NO;
+#else
     return ([[NSUserDefaults standardUserDefaults] boolForKey:@"MGLMapboxMetricsEnabled"] &&
             [[NSUserDefaults standardUserDefaults] integerForKey:@"MGLMapboxAccountType"] == 0);
+#endif
 }
 
 - (BOOL)debugLoggingEnabled {
@@ -194,17 +198,8 @@ const NSTimeInterval MGLFlushInterval = 180;
             self.canEnableDebugLogging = YES;
         }
         
-
         // Watch for changes to telemetry settings by the user
-        __weak MGLMapboxEvents *weakSelf = self;
-        _userDefaultsObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSUserDefaultsDidChangeNotification
-                                                                                  object:nil
-                                                                                   queue:[NSOperationQueue mainQueue]
-                                                                              usingBlock:
-         ^(NSNotification *notification) {
-             MGLMapboxEvents *strongSelf = weakSelf;
-             [strongSelf pauseOrResumeMetricsCollectionIfRequired];
-         }];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(userDefaultsDidChange:) name:NSUserDefaultsDidChangeNotification object:nil];
        
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(pauseOrResumeMetricsCollectionIfRequired) name:UIApplicationDidEnterBackgroundNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(pauseOrResumeMetricsCollectionIfRequired) name:UIApplicationWillEnterForegroundNotification object:nil];
@@ -228,20 +223,26 @@ const NSTimeInterval MGLFlushInterval = 180;
 }
 
 - (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:_userDefaultsObserver];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self pauseMetricsCollection];
 }
 
 - (NSString *)instanceID {
-    if (self.lastInstanceIDRotationDate && [[NSDate date] timeIntervalSinceDate:self.lastInstanceIDRotationDate] >= 0) {
+    if (self.instanceIDRotationDate && [[NSDate date] timeIntervalSinceDate:self.instanceIDRotationDate] >= 0) {
         _instanceID = nil;
     }
     if (!_instanceID) {
         _instanceID = [[NSUUID UUID] UUIDString];
         NSTimeInterval twentyFourHourTimeInterval = 24 * 3600;
-        self.lastInstanceIDRotationDate = [[NSDate date] dateByAddingTimeInterval:twentyFourHourTimeInterval];
+        self.instanceIDRotationDate = [[NSDate date] dateByAddingTimeInterval:twentyFourHourTimeInterval];
     }
     return _instanceID;
+}
+
+- (void)userDefaultsDidChange:(NSNotification *)notification {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self pauseOrResumeMetricsCollectionIfRequired];
+    });
 }
 
 - (void)pauseOrResumeMetricsCollectionIfRequired {
@@ -314,38 +315,36 @@ const NSTimeInterval MGLFlushInterval = 180;
 }
 
 - (void)pushTurnstileEvent {
-    __weak MGLMapboxEvents *weakSelf = self;
+    if (self.turnstileSendDate && [[NSDate date] timeIntervalSinceDate:self.turnstileSendDate] < 0) {
+        return;
+    }
     
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        MGLMapboxEvents *strongSelf = weakSelf;
-        
-        if (!strongSelf) {
+    NSString *vendorID = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+    if (!vendorID) {
+        return;
+    }
+    
+    NSDictionary *turnstileEventAttributes = @{MGLEventKeyEvent: MGLEventTypeAppUserTurnstile,
+                                               MGLEventKeyCreated: [self.rfc3339DateFormatter stringFromDate:[NSDate date]],
+                                               MGLEventKeyVendorID: vendorID,
+                                               MGLEventKeyEnabledTelemetry: @([[self class] isEnabled])};
+    
+    if ([MGLAccountManager accessToken] == nil) {
+        return;
+    }
+    
+    __weak __typeof__(self) weakSelf = self;
+    [self.apiClient postEvent:turnstileEventAttributes completionHandler:^(NSError * _Nullable error) {
+        __strong __typeof__(weakSelf) strongSelf = weakSelf;
+        if (error) {
+            [strongSelf pushDebugEvent:MGLEventTypeLocalDebug withAttributes:@{MGLEventKeyLocalDebugDescription: @"Network error",
+                                                                         @"error": error}];
             return;
         }
-        
-        NSString *vendorID = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
-        if (!vendorID) {
-            return;
-        }
-        
-        NSDictionary *turnstileEventAttributes = @{MGLEventKeyEvent: MGLEventTypeAppUserTurnstile,
-                                                   MGLEventKeyCreated: [strongSelf.rfc3339DateFormatter stringFromDate:[NSDate date]],
-                                                   MGLEventKeyVendorID: vendorID,
-                                                   MGLEventKeyEnabledTelemetry: @([[strongSelf class] isEnabled])};
-        
-        if ([MGLAccountManager accessToken] == nil) {
-            return;
-        }
-        [strongSelf.apiClient postEvent:turnstileEventAttributes completionHandler:^(NSError * _Nullable error) {
-            if (error) {
-                [strongSelf pushDebugEvent:MGLEventTypeLocalDebug withAttributes:@{MGLEventKeyLocalDebugDescription: @"Network error",
-                                                                                   @"error": error}];
-                return;
-            }
-            [strongSelf writeEventToLocalDebugLog:turnstileEventAttributes];
-        }];
-    });
+        [strongSelf writeEventToLocalDebugLog:turnstileEventAttributes];
+        NSTimeInterval twentyFourHourTimeInterval = 24 * 3600;
+        strongSelf.turnstileSendDate = [[NSDate date] dateByAddingTimeInterval:twentyFourHourTimeInterval];
+    }];
 }
 
 + (void)pushEvent:(NSString *)event withAttributes:(MGLMapboxEventAttributes *)attributeDictionary {
@@ -361,7 +360,7 @@ const NSTimeInterval MGLFlushInterval = 180;
         [self pushTurnstileEvent];
     }
     
-    if ([self isPaused]) {
+    if (self.paused) {
         return;
     }
     
@@ -451,7 +450,7 @@ const NSTimeInterval MGLFlushInterval = 180;
 // Called implicitly from public use of +flush.
 //
 - (void)postEvents:(NS_ARRAY_OF(MGLMapboxEventAttributes *) *)events {
-    if ([self isPaused]) {
+    if (self.paused) {
         return;
     }
     

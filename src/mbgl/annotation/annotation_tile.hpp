@@ -1,8 +1,7 @@
-#ifndef MBGL_ANNOTATION_TILE
-#define MBGL_ANNOTATION_TILE
+#pragma once
 
 #include <mbgl/tile/geometry_tile.hpp>
-#include <mbgl/map/tile_id.hpp>
+#include <mbgl/tile/tile_id.hpp>
 
 #include <map>
 #include <unordered_map>
@@ -25,10 +24,16 @@ public:
 
 class AnnotationTileLayer : public GeometryTileLayer {
 public:
+    AnnotationTileLayer(const std::string&);
+
     std::size_t featureCount() const override { return features.size(); }
     util::ptr<const GeometryTileFeature> getFeature(std::size_t i) const override { return features[i]; }
+    std::string getName() const override { return name; };
 
     std::vector<util::ptr<const AnnotationTileFeature>> features;
+
+private:
+    std::string name;
 };
 
 class AnnotationTile : public GeometryTile {
@@ -38,24 +43,21 @@ public:
     std::map<std::string, util::ptr<AnnotationTileLayer>> layers;
 };
 
-class MapData;
+class AnnotationManager;
 
 class AnnotationTileMonitor : public GeometryTileMonitor {
 public:
-    // TODO: should just take AnnotationManager&, but we need to eliminate util::exclusive<AnnotationManager> from MapData first.
-    AnnotationTileMonitor(const TileID&, MapData&);
+    AnnotationTileMonitor(const OverscaledTileID&, AnnotationManager&);
     ~AnnotationTileMonitor();
 
     void update(std::unique_ptr<GeometryTile>);
     std::unique_ptr<AsyncRequest> monitorTile(const GeometryTileMonitor::Callback&) override;
 
-    TileID tileID;
+    OverscaledTileID tileID;
 
 private:
-    MapData& data;
+    AnnotationManager& annotationManager;
     GeometryTileMonitor::Callback callback;
 };
 
 } // namespace mbgl
-
-#endif

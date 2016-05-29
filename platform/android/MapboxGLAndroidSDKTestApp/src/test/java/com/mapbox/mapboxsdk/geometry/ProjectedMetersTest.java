@@ -1,5 +1,9 @@
 package com.mapbox.mapboxsdk.geometry;
 
+import android.os.Parcelable;
+
+import com.mapbox.mapboxsdk.utils.MockParcel;
+
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -48,8 +52,15 @@ public class ProjectedMetersTest {
     }
 
     @Test
-    public void testToString(){
+    public void testToString() {
         ProjectedMeters meters = new ProjectedMeters(1, 1);
-        assertEquals("toString should match","ProjectedMeters [northing=1.0, easting=1.0]",meters.toString());
+        assertEquals("toString should match", "ProjectedMeters [northing=1.0, easting=1.0]", meters.toString());
+    }
+
+    @Test
+    public void testParcelable() {
+        ProjectedMeters meters = new ProjectedMeters(1, 1);
+        Parcelable parcel = MockParcel.obtain(meters);
+        assertEquals("parcel should match initial object", meters, parcel);
     }
 }

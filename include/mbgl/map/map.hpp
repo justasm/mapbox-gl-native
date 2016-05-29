@@ -1,5 +1,4 @@
-#ifndef MBGL_MAP_MAP
-#define MBGL_MAP_MAP
+#pragma once
 
 #include <mbgl/util/optional.hpp>
 #include <mbgl/util/chrono.hpp>
@@ -7,8 +6,8 @@
 #include <mbgl/map/update.hpp>
 #include <mbgl/map/mode.hpp>
 #include <mbgl/util/geo.hpp>
+#include <mbgl/util/feature.hpp>
 #include <mbgl/util/noncopyable.hpp>
-#include <mbgl/util/vec.hpp>
 #include <mbgl/annotation/annotation.hpp>
 #include <mbgl/style/types.hpp>
 #include <mbgl/style/property_transition.hpp>
@@ -23,45 +22,30 @@ namespace mbgl {
 
 class FileSource;
 class View;
-class MapData;
-class MapContext;
 class SpriteImage;
-class Transform;
 class PointAnnotation;
 class ShapeAnnotation;
 struct CameraOptions;
 struct AnimationOptions;
 
-namespace util {
-template <class T> class Thread;
-} // namespace util
-
 class Map : private util::noncopyable {
-    friend class View;
-
 public:
     explicit Map(View&, FileSource&,
                  MapMode mapMode = MapMode::Continuous,
                  GLContextMode contextMode = GLContextMode::Unique,
-                 ConstrainMode constrainMode = ConstrainMode::HeightOnly);
+                 ConstrainMode constrainMode = ConstrainMode::HeightOnly,
+                 ViewportMode viewportMode = ViewportMode::Default);
     ~Map();
-
-    // Pauses the render thread. The render thread will stop running but will not be terminated and will not lose state until resumed.
-    void pause();
-    bool isPaused();
-
-    // Resumes a paused render thread
-    void resume();
 
     // Register a callback that will get called (on the render thread) when all resources have
     // been loaded and a complete render occurs.
     using StillImageCallback = std::function<void (std::exception_ptr, PremultipliedImage&&)>;
     void renderStill(StillImageCallback callback);
 
-    // Triggers a synchronous render.
-    void renderSync();
+    // Main render function.
+    void render();
 
-    // Notifies the Map thread that the state has changed and an update might be necessary.
+    // Notifies the Map that the state has changed and an update might be necessary.
     void update(Update update);
 
     // Styling
@@ -86,6 +70,7 @@ public:
     bool isPanning() const;
 
     // Camera
+    CameraOptions getCameraOptions(optional<EdgeInsets>) const;
     void jumpTo(const CameraOptions&);
     void easeTo(const CameraOptions&, const AnimationOptions&);
     void flyTo(const CameraOptions&, const AnimationOptions&);
@@ -107,8 +92,8 @@ public:
     double getZoom() const;
     void setLatLngZoom(const LatLng&, double zoom, const Duration& = Duration::zero());
     void setLatLngZoom(const LatLng&, double zoom, optional<EdgeInsets>, const Duration& = Duration::zero());
-    CameraOptions cameraForLatLngBounds(const LatLngBounds&, optional<EdgeInsets>);
-    CameraOptions cameraForLatLngs(const std::vector<LatLng>&, optional<EdgeInsets>);
+    CameraOptions cameraForLatLngBounds(const LatLngBounds&, optional<EdgeInsets>) const;
+    CameraOptions cameraForLatLngs(const std::vector<LatLng>&, optional<EdgeInsets>) const;
     void resetZoom();
     void setMinZoom(const double minZoom);
     double getMinZoom() const;
@@ -132,10 +117,14 @@ public:
     // North Orientation
     void setNorthOrientation(NorthOrientation);
     NorthOrientation getNorthOrientation() const;
-    
+
     // Constrain mode
     void setConstrainMode(ConstrainMode);
     ConstrainMode getConstrainMode() const;
+
+    // Viewport mode
+    void setViewportMode(ViewportMode);
+    ViewportMode getViewportMode() const;
 
     // Size
     uint16_t getWidth() const;
@@ -174,6 +163,10 @@ public:
                         const char* before = nullptr);
     void removeCustomLayer(const std::string& id);
 
+    // Feature queries
+    std::vector<Feature> queryRenderedFeatures(const ScreenCoordinate&, const optional<std::vector<std::string>>& layerIDs = {});
+    std::vector<Feature> queryRenderedFeatures(const ScreenBox&,        const optional<std::vector<std::string>>& layerIDs = {});
+
     // Memory
     void setSourceTileCacheSize(size_t);
     void onLowMemory();
@@ -187,20 +180,8 @@ public:
     void dumpDebugLogs() const;
 
 private:
-    View& view;
-    const std::unique_ptr<Transform> transform;
-    const std::unique_ptr<util::Thread<MapContext>> context;
-    MapData* data;
-
-    enum class RenderState {
-        never,
-        partial,
-        fully
-    };
-
-    RenderState renderState = RenderState::never;
+    class Impl;
+    const std::unique_ptr<Impl> impl;
 };
 
 } // namespace mbgl
-
-#endif

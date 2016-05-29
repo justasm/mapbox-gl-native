@@ -1,5 +1,4 @@
-#ifndef MBGL_PLATFORM_PLATFORM
-#define MBGL_PLATFORM_PLATFORM
+#pragma once
 
 #include <memory>
 #include <string>
@@ -15,9 +14,6 @@ std::string uppercase(const std::string &string);
 // Lowercase a string, potentially using platform-specific routines.
 std::string lowercase(const std::string &string);
 
-// Returns the path to the root folder of the application.
-const std::string &applicationRoot();
-
 // Makes the current thread low priority.
 void makeThreadLowPriority();
 
@@ -28,5 +24,3 @@ void showDebugImage(std::string name, const char *data, size_t width, size_t hei
 void showColorDebugImage(std::string name, const char *data, size_t logical_width, size_t logical_height, size_t width, size_t height);
 } // namespace platform
 } // namespace mbgl
-
-#endif

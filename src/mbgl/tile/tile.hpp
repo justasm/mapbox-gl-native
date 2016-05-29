@@ -1,28 +1,28 @@
-#ifndef MBGL_MAP_TILE
-#define MBGL_MAP_TILE
+#pragma once
 
+#include <mbgl/tile/tile_id.hpp>
 #include <mbgl/util/mat4.hpp>
-#include <mbgl/util/noncopyable.hpp>
 #include <mbgl/util/ptr.hpp>
 #include <mbgl/util/clip_id.hpp>
-#include <mbgl/map/tile_id.hpp>
 
 namespace mbgl {
 
 class TileData;
-struct box;
 
-class Tile : private util::noncopyable {
+class Tile {
 public:
-    explicit Tile(const TileID& id_)
-        : id(id_) {}
+    Tile(const UnwrappedTileID& id_, TileData& data_) : id(id_), data(data_) {
+    }
 
-    const TileID id;
+    Tile(const Tile&) = delete;
+    Tile(Tile&&) = default;
+    Tile& operator=(const Tile&) = delete;
+    Tile& operator=(Tile&&) = default;
+
+    const UnwrappedTileID id;
+    TileData& data;
     ClipID clip;
     mat4 matrix;
-    util::ptr<TileData> data;
 };
 
 } // namespace mbgl
-
-#endif

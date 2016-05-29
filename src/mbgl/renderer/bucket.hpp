@@ -1,5 +1,4 @@
-#ifndef MBGL_RENDERER_BUCKET
-#define MBGL_RENDERER_BUCKET
+#pragma once
 
 #include <mbgl/gl/gl.hpp>
 #include <mbgl/renderer/render_pass.hpp>
@@ -15,7 +14,7 @@ namespace mbgl {
 
 class Painter;
 class StyleLayer;
-class TileID;
+class UnwrappedTileID;
 class CollisionTile;
 
 namespace gl {
@@ -32,11 +31,13 @@ public:
 
     // Every time this bucket is getting rendered, this function is called. This happens either
     // once or twice (for Opaque and Transparent render passes).
-    virtual void render(Painter&, const StyleLayer&, const TileID&, const mat4&) = 0;
+    virtual void render(Painter&, const StyleLayer&, const UnwrappedTileID&, const mat4&) = 0;
 
     virtual ~Bucket() = default;
 
     virtual bool hasData() const = 0;
+
+    virtual bool needsClipping() const = 0;
 
     inline bool needsUpload() const {
         return !uploaded;
@@ -51,5 +52,3 @@ protected:
 };
 
 } // namespace mbgl
-
-#endif

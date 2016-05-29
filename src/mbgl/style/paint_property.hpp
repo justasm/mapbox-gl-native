@@ -1,9 +1,9 @@
-#ifndef MBGL_PAINT_PROPERTY
-#define MBGL_PAINT_PROPERTY
+#pragma once
 
 #include <mbgl/style/class_dictionary.hpp>
 #include <mbgl/style/property_parsing.hpp>
 #include <mbgl/style/function.hpp>
+#include <mbgl/style/function_evaluator.hpp>
 #include <mbgl/style/property_transition.hpp>
 #include <mbgl/style/style_cascade_parameters.hpp>
 #include <mbgl/style/style_calculation_parameters.hpp>
@@ -16,10 +16,11 @@
 
 namespace mbgl {
 
-template <typename T, typename Result = T>
+template <class T, template <class S> class Evaluator = NormalFunctionEvaluator>
 class PaintProperty {
 public:
-    using Fn = Function<Result>;
+    using Fn = Function<T>;
+    using Result = typename Evaluator<T>::ResultType;
 
     explicit PaintProperty(T fallbackValue)
         : value(fallbackValue) {
@@ -49,14 +50,14 @@ public:
             ClassID classID = isClass ? ClassDictionary::Get().lookup(paintName.substr(6)) : ClassID::Default;
 
             if (it->value.HasMember(name)) {
-                auto v = parseProperty<Fn>(name, it->value[name]);
+                auto v = parseProperty<T>(name, it->value[name]);
                 if (v) {
                     values.emplace(classID, *v);
                 }
             }
 
             if (it->value.HasMember(transitionName.c_str())) {
-                auto v = parseProperty<PropertyTransition>(name, it->value[transitionName.c_str()]);
+                auto v = parsePropertyTransition(name, it->value[transitionName.c_str()]);
                 if (v) {
                     transitions.emplace(classID, *v);
                 }
@@ -114,7 +115,8 @@ public:
         }
 
         Result calculate(const StyleCalculationParameters& parameters) {
-            Result final = value.evaluate(parameters);
+            Evaluator<T> evaluator;
+            Result final = evaluator(value, parameters);
             if (!prior) {
                 // No prior value.
                 return final;
@@ -141,5 +143,3 @@ public:
 };
 
 } // namespace mbgl
-
-#endif

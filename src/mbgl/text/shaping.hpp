@@ -1,11 +1,8 @@
-#ifndef MBGL_TEXT_SHAPING
-#define MBGL_TEXT_SHAPING
+#pragma once
 
 #include <mbgl/text/glyph.hpp>
 #include <mbgl/sprite/sprite_atlas.hpp>
 #include <mbgl/sprite/sprite_image.hpp>
-
-#include <mbgl/util/vec.hpp>
 #include <mbgl/util/optional.hpp>
 
 namespace mbgl {
@@ -33,5 +30,3 @@ namespace mbgl {
     PositionedIcon shapeIcon(const SpriteAtlasElement& image, const SymbolLayoutProperties&);
 
 } // namespace mbgl
-
-#endif

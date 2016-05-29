@@ -1,5 +1,4 @@
-#ifndef MBGL_STORAGE_RESPONSE
-#define MBGL_STORAGE_RESPONSE
+#pragma once
 
 #include <mbgl/util/chrono.hpp>
 #include <mbgl/util/optional.hpp>
@@ -30,8 +29,8 @@ public:
     // The actual data of the response. Present only for non-error, non-notModified responses.
     std::shared_ptr<const std::string> data;
 
-    optional<SystemTimePoint> modified;
-    optional<SystemTimePoint> expires;
+    optional<Timestamp> modified;
+    optional<Timestamp> expires;
     optional<std::string> etag;
 };
 
@@ -56,5 +55,3 @@ public:
 std::ostream& operator<<(std::ostream&, Response::Error::Reason);
 
 } // namespace mbgl
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef MBGL_PLATFORM_DEFAULT_STYLES
-#define MBGL_PLATFORM_DEFAULT_STYLES
+#pragma once
 
 #include <vector>
 #include <string>
@@ -14,19 +13,19 @@ struct DefaultStyle {
 };
 
 extern const DefaultStyle streets;
-extern const DefaultStyle emerald;
+extern const DefaultStyle outdoors;
 extern const DefaultStyle light;
 extern const DefaultStyle dark;
 extern const DefaultStyle satellite;
-extern const DefaultStyle hybrid;
+extern const DefaultStyle satelliteStreets;
 
 const DefaultStyle orderedStyles[] = {
-    streets, emerald, light, dark, satellite, hybrid,
+    streets, outdoors, light, dark, satellite, satelliteStreets,
 };
 const size_t numOrderedStyles = sizeof(orderedStyles) / sizeof(DefaultStyle);
+
+static const unsigned currentVersion = 9;
 
 } // end namespace default_styles
 } // end namespace util
 } // end namespace mbgl
-
-#endif

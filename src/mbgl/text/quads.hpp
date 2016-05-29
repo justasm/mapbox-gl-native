@@ -1,18 +1,16 @@
-#ifndef MBGL_TEXT_QUADS
-#define MBGL_TEXT_QUADS
+#pragma once
 
 #include <mbgl/text/glyph.hpp>
 #include <mbgl/tile/geometry_tile.hpp>
-#include <mbgl/util/vec.hpp>
 
 #include <vector>
 
 namespace mbgl {
 
     struct SymbolQuad {
-        explicit SymbolQuad(const vec2<float> &tl_, const vec2<float> &tr_,
-                const vec2<float> &bl_, const vec2<float> &br_,
-                const Rect<uint16_t> &tex_, float angle_, const vec2<float> &anchorPoint_,
+        explicit SymbolQuad(const Point<float> &tl_, const Point<float> &tr_,
+                const Point<float> &bl_, const Point<float> &br_,
+                const Rect<uint16_t> &tex_, float angle_, const Point<float> &anchorPoint_,
                 float minScale_, float maxScale_)
             : tl(tl_),
             tr(tr_),
@@ -24,10 +22,10 @@ namespace mbgl {
             minScale(minScale_),
             maxScale(maxScale_) {}
 
-        vec2<float> tl, tr, bl, br;
+        Point<float> tl, tr, bl, br;
         Rect<uint16_t> tex;
         float angle;
-        vec2<float> anchorPoint;
+        Point<float> anchorPoint;
         float minScale, maxScale;
     };
 
@@ -45,5 +43,3 @@ namespace mbgl {
             const float boxScale, const GeometryCoordinates& line, const SymbolLayoutProperties& layout,
             const bool alongLine, const GlyphPositions& face);
 } // namespace mbgl
-
-#endif

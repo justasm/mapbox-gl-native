@@ -220,6 +220,10 @@ void OfflineDownload::ensureResource(const Resource& resource, std::function<voi
 
             status.completedResourceCount++;
             status.completedResourceSize += offlineResponse->second;
+            if (resource.kind == Resource::Kind::Tile) {
+                status.completedTileSize += offlineResponse->second;
+            }
+            
             observer->statusChanged(status);
             
             if (status.complete()) {
@@ -228,12 +232,8 @@ void OfflineDownload::ensureResource(const Resource& resource, std::function<voi
 
             return;
         }
-
-        if (resource.kind == Resource::Kind::Tile
-            && util::mapbox::isMapboxURL(resource.url)
-            && offlineDatabase.offlineMapboxTileCountLimitExceeded()) {
-            observer->mapboxTileCountLimitExceeded(offlineDatabase.getOfflineMapboxTileCountLimit());
-            setState(OfflineRegionDownloadState::Inactive);
+        
+        if (checkTileCountLimit(resource)) {
             return;
         }
 
@@ -251,15 +251,35 @@ void OfflineDownload::ensureResource(const Resource& resource, std::function<voi
             }
 
             status.completedResourceCount++;
-            status.completedResourceSize += offlineDatabase.putRegionResource(id, resource, onlineResponse);
+            uint64_t resourceSize = offlineDatabase.putRegionResource(id, resource, onlineResponse);
+            status.completedResourceSize += resourceSize;
+            if (resource.kind == Resource::Kind::Tile) {
+                status.completedTileSize += resourceSize;
+            }
 
             observer->statusChanged(status);
+            
+            if (checkTileCountLimit(resource)) {
+                return;
+            }
             
             if (status.complete()) {
                 setState(OfflineRegionDownloadState::Inactive);
             }
         });
     });
+}
+
+bool OfflineDownload::checkTileCountLimit(const Resource& resource) {
+    if (resource.kind == Resource::Kind::Tile
+        && util::mapbox::isMapboxURL(resource.url)
+        && offlineDatabase.offlineMapboxTileCountLimitExceeded()) {
+        observer->mapboxTileCountLimitExceeded(offlineDatabase.getOfflineMapboxTileCountLimit());
+        setState(OfflineRegionDownloadState::Inactive);
+        return true;
+    }
+    
+    return false;
 }
 
 } // namespace mbgl

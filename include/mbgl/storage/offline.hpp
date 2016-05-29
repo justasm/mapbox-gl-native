@@ -30,7 +30,7 @@ public:
     OfflineTilePyramidRegionDefinition(const std::string&, const LatLngBounds&, double, double, float);
 
     /* Private */
-    std::vector<TileID> tileCover(SourceType, uint16_t tileSize, const SourceInfo&) const;
+    std::vector<CanonicalTileID> tileCover(SourceType, uint16_t tileSize, const SourceInfo&) const;
 
     const std::string styleURL;
     const LatLngBounds bounds;
@@ -93,9 +93,22 @@ public:
     uint64_t completedResourceCount = 0;
 
     /**
-     * The cumulative size, in bytes, of all resources that have been fully downloaded.
+     * The cumulative size, in bytes, of all resources (inclusive of tiles) that have
+     * been fully downloaded.
      */
     uint64_t completedResourceSize = 0;
+
+    /**
+     * The number of tiles that are known to be required for this region. This is a
+     * subset of `completedResourceCount`.
+     */
+    uint64_t completedTileCount = 0;
+
+    /**
+     * The cumulative size, in bytes, of all tiles that have been fully downloaded.
+     * This is a subset of `completedResourceSize`.
+     */
+    uint64_t completedTileSize = 0;
 
     /**
      * The number of resources that are known to be required for this region. See the

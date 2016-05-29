@@ -3,7 +3,7 @@
 #import "MGLAccountManager.h"
 
 static NSString * const MGLAPIClientUserAgentBase = @"MapboxEventsiOS";
-static NSString * const MGLAPIClientBaseURL = @"https://api.mapbox.com";
+static NSString * const MGLAPIClientBaseURL = @"https://events.mapbox.com";
 static NSString * const MGLAPIClientEventsPath = @"events/v2";
 
 static NSString * const MGLAPIClientHeaderFieldUserAgentKey = @"User-Agent";
@@ -14,7 +14,7 @@ static NSString * const MGLAPIClientHTTPMethodPost = @"POST";
 @interface MGLAPIClient ()
 
 @property (nonatomic, copy) NSURLSession *session;
-@property (nonatomic, copy) NSString *baseURL;
+@property (nonatomic, copy) NSURL *baseURL;
 @property (nonatomic, copy) NSData *digicertCert;
 @property (nonatomic, copy) NSData *geoTrustCert;
 @property (nonatomic, copy) NSData *testServerCert;
@@ -47,14 +47,14 @@ static NSString * const MGLAPIClientHTTPMethodPost = @"POST";
         NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
         NSError *statusError = nil;
         if (httpResponse.statusCode >= 400) {
-            NSString *description = [NSString stringWithFormat:NSLocalizedString(@"The session data task failed. Original request was: %@", nil), dataTask.originalRequest];
-            NSString *reason = [NSString stringWithFormat:NSLocalizedString(@"The status code was %ld", nil), (long)httpResponse.statusCode];
+            NSString *description = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"API_CLIENT_400_DESC", nil, nil, @"The session data task failed. Original request was: %@", nil), dataTask.originalRequest];
+            NSString *reason = [NSString stringWithFormat:NSLocalizedStringWithDefaultValue(@"API_CLIENT_400_REASON", nil, nil, @"The status code was %ld", nil), (long)httpResponse.statusCode];
             NSDictionary *userInfo = @{NSLocalizedDescriptionKey: description,
                                        NSLocalizedFailureReasonErrorKey: reason};
             statusError = [NSError errorWithDomain:MGLErrorDomain code:1 userInfo:userInfo];
         }
         if (completionHandler) {
-            error = error ? error : statusError;
+            error = error ?: statusError;
             completionHandler(error);
         }
         [self.dataTasks removeObject:dataTask];
@@ -76,8 +76,9 @@ static NSString * const MGLAPIClientHTTPMethodPost = @"POST";
 #pragma mark Utilities
 
 - (NSURLRequest *)requestForEvents:(NS_ARRAY_OF(MGLMapboxEventAttributes *) *)events {
-    NSString *url = [NSString stringWithFormat:@"%@/%@?access_token=%@", self.baseURL, MGLAPIClientEventsPath, [MGLAccountManager accessToken]];
-    NSMutableURLRequest *request = [[NSMutableURLRequest alloc] initWithURL:[NSURL URLWithString:url]];
+    NSString *path = [NSString stringWithFormat:@"%@?access_token=%@", MGLAPIClientEventsPath, [MGLAccountManager accessToken]];
+    NSURL *url = [NSURL URLWithString:path relativeToURL:self.baseURL];
+    NSMutableURLRequest *request = [[NSMutableURLRequest alloc] initWithURL:url];
     [request setValue:self.userAgent forHTTPHeaderField:MGLAPIClientHeaderFieldUserAgentKey];
     [request setValue:MGLAPIClientHeaderFieldContentTypeValue forHTTPHeaderField:MGLAPIClientHeaderFieldContentTypeKey];
     [request setHTTPMethod:MGLAPIClientHTTPMethodPost];
@@ -87,12 +88,13 @@ static NSString * const MGLAPIClientHTTPMethodPost = @"POST";
 }
 
 - (void)setupBaseURL {
-    NSString *testServerURL = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"MGLMetricsTestServerURL"];
-    if (testServerURL) {
-        _baseURL = testServerURL;
-        _usesTestServer = YES;
+    NSString *testServerURLString = [[NSUserDefaults standardUserDefaults] stringForKey:@"MGLTelemetryTestServerURL"];
+    NSURL *testServerURL = [NSURL URLWithString:testServerURLString];
+    if (testServerURL && [testServerURL.scheme isEqualToString:@"https"]) {
+        self.baseURL = testServerURL;
+        self.usesTestServer = YES;
     } else {
-        _baseURL = MGLAPIClientBaseURL;
+        self.baseURL = [NSURL URLWithString:MGLAPIClientBaseURL];
     }
 }
 
@@ -115,12 +117,12 @@ static NSString * const MGLAPIClientHTTPMethodPost = @"POST";
 }
 
 - (void)setupUserAgent {
-    NSString *appName = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleName"];
+    NSString *appName = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleIdentifier"];
     NSString *appVersion = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     NSString *appBuildNumber = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"];
     NSString *semanticVersion = [NSBundle mgl_frameworkInfoDictionary][@"MGLSemanticVersionString"];
     NSString *shortVersion = [NSBundle mgl_frameworkInfoDictionary][@"CFBundleShortVersionString"];
-    NSString *sdkVersion = semanticVersion ? semanticVersion : shortVersion;
+    NSString *sdkVersion = semanticVersion ?: shortVersion;
     _userAgent = [NSString stringWithFormat:@"%@/%@/%@ %@/%@", appName, appVersion, appBuildNumber, MGLAPIClientUserAgentBase, sdkVersion];
 }
 

@@ -25,29 +25,6 @@ namespace mbgl {
 
 class DefaultFileSource::Impl {
 public:
-    class Task {
-    public:
-        Task(Resource resource, FileSource::Callback callback, DefaultFileSource::Impl* impl) {
-            auto offlineResponse = impl->offlineDatabase.get(resource);
-
-            Resource revalidation = resource;
-
-            if (offlineResponse) {
-                revalidation.priorModified = offlineResponse->modified;
-                revalidation.priorExpires = offlineResponse->expires;
-                revalidation.priorEtag = offlineResponse->etag;
-                callback(*offlineResponse);
-            }
-
-            onlineRequest = impl->onlineFileSource.request(revalidation, [=] (Response onlineResponse) {
-                impl->offlineDatabase.put(revalidation, onlineResponse);
-                callback(onlineResponse);
-            });
-        }
-
-        std::unique_ptr<AsyncRequest> onlineRequest;
-    };
-
     Impl(const std::string& cachePath, uint64_t maximumCacheSize)
         : offlineDatabase(cachePath, maximumCacheSize) {
     }
@@ -88,6 +65,7 @@ public:
 
     void deleteRegion(OfflineRegion&& region, std::function<void (std::exception_ptr)> callback) {
         try {
+            downloads.erase(region.getID());
             offlineDatabase.deleteRegion(std::move(region));
             callback({});
         } catch (...) {
@@ -104,7 +82,35 @@ public:
     }
 
     void request(AsyncRequest* req, Resource resource, Callback callback) {
-        tasks[req] = std::make_unique<Task>(resource, callback, this);
+        Resource revalidation = resource;
+
+        const bool hasPrior = resource.priorEtag || resource.priorModified || resource.priorExpires;
+        if (!hasPrior || resource.necessity == Resource::Optional) {
+            auto offlineResponse = offlineDatabase.get(resource);
+
+            if (resource.necessity == Resource::Optional && !offlineResponse) {
+                // Ensure there's always a response that we can send, so the caller knows that
+                // there's no optional data available in the cache.
+                offlineResponse.emplace();
+                offlineResponse->noContent = true;
+                offlineResponse->error = std::make_unique<Response::Error>(
+                    Response::Error::Reason::NotFound, "Not found in offline database");
+            }
+
+            if (offlineResponse) {
+                revalidation.priorModified = offlineResponse->modified;
+                revalidation.priorExpires = offlineResponse->expires;
+                revalidation.priorEtag = offlineResponse->etag;
+                callback(*offlineResponse);
+            }
+        }
+
+        if (resource.necessity == Resource::Required) {
+            tasks[req] = onlineFileSource.request(revalidation, [=] (Response onlineResponse) {
+                this->offlineDatabase.put(revalidation, onlineResponse);
+                callback(onlineResponse);
+            });
+        }
     }
 
     void cancel(AsyncRequest* req) {
@@ -131,14 +137,14 @@ private:
 
     OfflineDatabase offlineDatabase;
     OnlineFileSource onlineFileSource;
-    std::unordered_map<AsyncRequest*, std::unique_ptr<Task>> tasks;
+    std::unordered_map<AsyncRequest*, std::unique_ptr<AsyncRequest>> tasks;
     std::unordered_map<int64_t, std::unique_ptr<OfflineDownload>> downloads;
 };
 
 DefaultFileSource::DefaultFileSource(const std::string& cachePath,
                                      const std::string& assetRoot,
                                      uint64_t maximumCacheSize)
-    : thread(std::make_unique<util::Thread<Impl>>(util::ThreadContext{"DefaultFileSource", util::ThreadType::Unknown, util::ThreadPriority::Low},
+    : thread(std::make_unique<util::Thread<Impl>>(util::ThreadContext{"DefaultFileSource", util::ThreadPriority::Low},
             cachePath, maximumCacheSize)),
       assetFileSource(std::make_unique<AssetFileSource>(assetRoot)) {
 }

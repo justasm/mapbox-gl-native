@@ -1,5 +1,9 @@
 package com.mapbox.mapboxsdk.geometry;
 
+import android.os.Parcelable;
+
+import com.mapbox.mapboxsdk.utils.MockParcel;
+
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -73,12 +77,18 @@ public class VisibleRegionTest {
     public void testToString() {
         VisibleRegion region = new VisibleRegion(FAR_LEFT, FAR_RIGHT, NEAR_LEFT, NEAR_RIGHT, BOUNDS);
         assertEquals("string should match",
-                "[farLeft [LatLng [longitude=-12.0, latitude=52.0, altitude=0.0]], " +
-                        "farRight [LatLng [longitude=26.0, latitude=52.0, altitude=0.0]], " +
-                        "nearLeft [LatLng [longitude=-12.0, latitude=34.0, altitude=0.0]], " +
-                        "nearRight [LatLng [longitude=26.0, latitude=34.0, altitude=0.0]], " +
+                "[farLeft [LatLng [latitude=52.0, longitude=-12.0, altitude=0.0]], " +
+                        "farRight [LatLng [latitude=52.0, longitude=26.0, altitude=0.0]], " +
+                        "nearLeft [LatLng [latitude=34.0, longitude=-12.0, altitude=0.0]], " +
+                        "nearRight [LatLng [latitude=34.0, longitude=26.0, altitude=0.0]], " +
                         "latLngBounds [N:52.0; E:26.0; S:34.0; W:-12.0]]"
                 , region.toString());
     }
 
+    @Test
+    public void testParcelable() {
+        VisibleRegion region = new VisibleRegion(FAR_LEFT, FAR_RIGHT, NEAR_LEFT, NEAR_RIGHT, BOUNDS);
+        Parcelable parcel = MockParcel.obtain(region);
+        assertEquals("parcel should match initial object", region, parcel);
+    }
 }

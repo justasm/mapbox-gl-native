@@ -6,52 +6,52 @@ set -u
 
 NAME=Mapbox
 OUTPUT=build/osx/pkg
-OSX_SDK_VERSION=`xcrun --sdk macosx --show-sdk-version`
-LIBUV_VERSION=1.7.5
+DERIVED_DATA=build/osx
+PRODUCTS=${DERIVED_DATA}/Build/Products
 
-if [[ ${#} -eq 0 ]]; then # e.g. "make xpackage"
-    BUILDTYPE="Release"
-    GCC_GENERATE_DEBUGGING_SYMBOLS="YES"
-else # e.g. "make xpackage-strip"
-    BUILDTYPE="Release"
-    GCC_GENERATE_DEBUGGING_SYMBOLS="NO"
-fi
+BUILDTYPE=${BUILDTYPE:-Release}
+GCC_GENERATE_DEBUGGING_SYMBOLS=${SYMBOLS:-YES}
 
 function step { >&2 echo -e "\033[1m\033[36m* $@\033[0m"; }
 function finish { >&2 echo -en "\033[0m"; }
 trap finish EXIT
 
-step "Creating build files..."
-export MASON_PLATFORM=osx
-export BUILDTYPE=${BUILDTYPE:-Release}
-export HOST=osx
-make Xcode/osx
+rm -rf ${OUTPUT}
 
-VERSION=${TRAVIS_JOB_NUMBER:-${BITRISE_BUILD_NUMBER:-0}}
+HASH=`git log | head -1 | awk '{ print $2 }' | cut -c 1-10` && true
+PROJ_VERSION=$(git rev-list --count HEAD)
+SEM_VERSION=$( git describe --tags --match=osx-v*.*.* --abbrev=0 | sed 's/^osx-v//' )
+SHORT_VERSION=${SEM_VERSION%-*}
 
-step "Building OS X framework (build ${VERSION})..."
-xcodebuild -sdk macosx${OSX_SDK_VERSION} \
-    ARCHS="x86_64" \
-    ONLY_ACTIVE_ARCH=NO \
+step "Building targets (build ${PROJ_VERSION}, version ${SEM_VERSION})…"
+xcodebuild \
     GCC_GENERATE_DEBUGGING_SYMBOLS=${GCC_GENERATE_DEBUGGING_SYMBOLS} \
-    CURRENT_PROJECT_VERSION=${VERSION} \
-    -project ./build/osx-x86_64/gyp/osx.xcodeproj \
+    CURRENT_PROJECT_VERSION=${PROJ_VERSION} \
+    CURRENT_SHORT_VERSION=${SHORT_VERSION} \
+    CURRENT_SEMANTIC_VERSION=${SEM_VERSION} \
+    CURRENT_COMMIT_HASH=${HASH} \
+    -derivedDataPath ${DERIVED_DATA} \
+    -workspace ./platform/osx/osx.xcworkspace \
+    -scheme dynamic \
     -configuration ${BUILDTYPE} \
-    -target osxsdk \
-    -jobs ${JOBS}
+    -jobs ${JOBS} | xcpretty
 
-TARGET_BUILD_DIR=gyp/build/${BUILDTYPE}
-INFOPLIST_PATH=Mapbox.framework/Versions/Current/Resources/Info.plist
+step "Copying dynamic framework into place"
+mkdir -p "${OUTPUT}/${NAME}.framework"
+cp -r ${PRODUCTS}/${BUILDTYPE}/${NAME}.framework/* "${OUTPUT}/${NAME}.framework"
+if [[ -e ${PRODUCTS}/${BUILDTYPE}/${NAME}.framework.dSYM ]]; then
+    cp -r ${PRODUCTS}/${BUILDTYPE}/${NAME}.framework.dSYM "${OUTPUT}"
+fi
 
-# Uncomment when we're ready to release an official version.
-#VERSION=$( git tag | grep ^osx | sed 's/^osx-//' | sort -r | grep -v '\-rc.' | grep -v '\-pre.' | sed -n '1p' | sed 's/^v//' )
-#if [ "$VERSION" ]; then
-#    plutil \
-#        -replace CFBundleShortVersionString -string ${VERSION} \
-#        $TARGET_BUILD_DIR/$INFOPLIST_PATH
-#    plutil \
-#        -replace CFBundleVersion -string ${VERSION} \
-#        $TARGET_BUILD_DIR/$INFOPLIST_PATH
-#fi
+if [[ "${GCC_GENERATE_DEBUGGING_SYMBOLS}" == false ]]; then
+    step "Stripping binaries…"
+    strip -Sx "${OUTPUT}/${NAME}.framework/${NAME}"
+fi
 
-echo $TARGET_BUILD_DIR/Mapbox.framework
+step "Copying library resources…"
+cp -pv LICENSE.md "${OUTPUT}"
+cp -pv platform/osx/docs/pod-README.md "${OUTPUT}/README.md"
+sed -n -e '/^## /,$p' platform/osx/CHANGELOG.md > "${OUTPUT}/CHANGELOG.md"
+
+step "Generating API documentation…"
+make xdocument OUTPUT="${OUTPUT}/documentation"

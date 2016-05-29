@@ -6,7 +6,10 @@
 
 using namespace mbgl;
 
-void Painter::renderRaster(RasterBucket& bucket, const RasterLayer& layer, const TileID&, const mat4& matrix) {
+void Painter::renderRaster(RasterBucket& bucket,
+                           const RasterLayer& layer,
+                           const UnwrappedTileID&,
+                           const mat4& matrix) {
     if (pass != RenderPass::Translucent) return;
 
     const RasterPaintProperties& properties = layer.paint;
@@ -15,15 +18,18 @@ void Painter::renderRaster(RasterBucket& bucket, const RasterLayer& layer, const
         config.program = rasterShader->getID();
         rasterShader->u_matrix = matrix;
         rasterShader->u_buffer = 0;
-        rasterShader->u_opacity = properties.opacity;
-        rasterShader->u_brightness_low = properties.brightnessMin;
-        rasterShader->u_brightness_high = properties.brightnessMax;
-        rasterShader->u_saturation_factor = saturationFactor(properties.saturation);
-        rasterShader->u_contrast_factor = contrastFactor(properties.contrast);
-        rasterShader->u_spin_weights = spinWeights(properties.hueRotate);
+        rasterShader->u_opacity = properties.rasterOpacity;
+        rasterShader->u_brightness_low = properties.rasterBrightnessMin;
+        rasterShader->u_brightness_high = properties.rasterBrightnessMax;
+        rasterShader->u_saturation_factor = saturationFactor(properties.rasterSaturation);
+        rasterShader->u_contrast_factor = contrastFactor(properties.rasterContrast);
+        rasterShader->u_spin_weights = spinWeights(properties.rasterHueRotate);
 
-        config.stencilOp.reset();
-        config.stencilTest = GL_TRUE;
+        config.stencilTest = GL_FALSE;
+
+        rasterShader->u_image = 0;
+        config.activeTexture = GL_TEXTURE0;
+
         config.depthFunc.reset();
         config.depthTest = GL_TRUE;
         config.depthMask = GL_FALSE;

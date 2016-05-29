@@ -6,7 +6,6 @@
 #include <mbgl/util/math.hpp>
 #include <mbgl/util/std.hpp>
 #include <mbgl/util/constants.hpp>
-#include <mbgl/util/thread_context.hpp>
 
 #include <cassert>
 #include <cmath>
@@ -185,7 +184,7 @@ void SpriteAtlas::bind(bool linear, gl::GLObjectStore& glObjectStore) {
         return; // Empty atlas
     }
 
-    if (!texture) {
+    if (!texture.created()) {
         texture.create(glObjectStore);
         MBGL_CHECK_ERROR(glBindTexture(GL_TEXTURE_2D, texture.getID()));
 #ifndef GL_ES_VERSION_2_0

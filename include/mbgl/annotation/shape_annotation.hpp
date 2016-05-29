@@ -1,12 +1,10 @@
-#ifndef MBGL_ANNOTATION_SHAPE_ANNOTATION
-#define MBGL_ANNOTATION_SHAPE_ANNOTATION
+#pragma once
 
 #include <mbgl/annotation/annotation.hpp>
 #include <mbgl/style/types.hpp>
 
 #include <mbgl/util/geo.hpp>
-
-#include <mapbox/variant.hpp>
+#include <mbgl/util/variant.hpp>
 
 namespace mbgl {
 
@@ -27,7 +25,7 @@ struct LineAnnotationProperties {
 
 class ShapeAnnotation {
 public:
-    using Properties = mapbox::util::variant<
+    using Properties = variant<
         FillAnnotationProperties, // creates a fill annotation
         LineAnnotationProperties, // creates a line annotation
         std::string>; // creates an annotation whose type and properties are sourced from a style layer
@@ -54,5 +52,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

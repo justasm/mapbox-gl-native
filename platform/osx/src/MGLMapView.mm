@@ -1,13 +1,16 @@
 #import "MGLMapView_Private.h"
+#import "MGLAnnotationImage_Private.h"
 #import "MGLAttributionButton.h"
 #import "MGLCompassCell.h"
 #import "MGLOpenGLLayer.h"
 #import "MGLStyle.h"
 
-#import "../../darwin/src/MGLAccountManager_Private.h"
-#import "../../darwin/src/MGLGeometry_Private.h"
-#import "../../darwin/src/MGLMultiPoint_Private.h"
+#import "MGLFeature_Private.h"
+#import "MGLGeometry_Private.h"
+#import "MGLMultiPoint_Private.h"
+#import "MGLOfflineStorage_Private.h"
 
+#import "MGLAccountManager.h"
 #import "MGLMapCamera.h"
 #import "MGLPolygon.h"
 #import "MGLPolyline.h"
@@ -22,18 +25,17 @@
 #import <mbgl/sprite/sprite_image.hpp>
 #import <mbgl/storage/default_file_source.hpp>
 #import <mbgl/storage/network_status.hpp>
+#import <mbgl/math/wrap.hpp>
 #import <mbgl/util/constants.hpp>
-#import <mbgl/util/math.hpp>
-#import <mbgl/util/std.hpp>
 #import <mbgl/util/chrono.hpp>
 
 #import <map>
 #import <unordered_set>
 
-#import "../../darwin/src/NSBundle+MGLAdditions.h"
-#import "../../darwin/src/NSProcessInfo+MGLAdditions.h"
-#import "../../darwin/src/NSException+MGLAdditions.h"
-#import "../../darwin/src/NSString+MGLAdditions.h"
+#import "NSBundle+MGLAdditions.h"
+#import "NSProcessInfo+MGLAdditions.h"
+#import "NSException+MGLAdditions.h"
+#import "NSString+MGLAdditions.h"
 
 #import <QuartzCore/QuartzCore.h>
 
@@ -55,6 +57,9 @@ const CGFloat MGLKeyPanningIncrement = 150;
 /// Degrees that a single press of the rotation keyboard shortcut rotates the map by.
 const CLLocationDegrees MGLKeyRotationIncrement = 25;
 
+/// Key for the user default that, when true, causes the map view to zoom in and out on scroll wheel events.
+NSString * const MGLScrollWheelZoomsMapViewDefaultKey = @"MGLScrollWheelZoomsMapView";
+
 /// Reuse identifier and file name of the default point annotation image.
 static NSString * const MGLDefaultStyleMarkerSymbolName = @"default_marker";
 
@@ -75,8 +80,14 @@ struct MGLAttribution {
     /// URL to open when the attribution button is clicked.
     NSString *urlString;
 } MGLAttributions[] = {
-    { @"Mapbox", @"https://www.mapbox.com/about/maps/" },
-    { @"OpenStreetMap", @"http://www.openstreetmap.org/about/" },
+    {
+        .title = NSLocalizedStringWithDefaultValue(@"COPYRIGHT_MAPBOX", nil, nil, @"Mapbox", @"Linked part of copyright notice"),
+        .urlString = NSLocalizedStringWithDefaultValue(@"COPYRIGHT_MAPBOX_LINK", nil, nil, @"https://www.mapbox.com/about/maps/", @"Copyright notice link"),
+    },
+    {
+        .title = NSLocalizedStringWithDefaultValue(@"COPYRIGHT_OSM", nil, nil, @"OpenStreetMap", @"Linked part of copyright notice"),
+        .urlString = NSLocalizedStringWithDefaultValue(@"COPYRIGHT_OSM_LINK", nil, nil, @"http://www.openstreetmap.org/about/", @"Copyright notice link"),
+    },
 };
 
 /// Unique identifier representing a single annotation in mbgl.
@@ -126,9 +137,8 @@ mbgl::Color MGLColorObjectFromNSColor(NSColor *color) {
 class MGLAnnotationContext {
 public:
     id <MGLAnnotation> annotation;
-    /// mbgl-given identifier for the annotation image used by this annotation.
-    /// Based on the annotation image’s reusable identifier.
-    NSString *symbolIdentifier;
+    /// The annotation’s image’s reuse identifier.
+    NSString *imageReuseIdentifier;
 };
 
 @interface MGLMapView () <NSPopoverDelegate, MGLMultiPointDelegate>
@@ -151,7 +161,6 @@ public:
     /// Cross-platform map view controller.
     mbgl::Map *_mbglMap;
     MGLMapViewImpl *_mbglView;
-    mbgl::DefaultFileSource *_mbglFileSource;
     
     NSPanGestureRecognizer *_panGestureRecognizer;
     NSMagnificationGestureRecognizer *_magnificationGestureRecognizer;
@@ -193,6 +202,14 @@ public:
 
 #pragma mark Lifecycle
 
++ (void)initialize {
+    if (self == [MGLMapView class]) {
+        [[NSUserDefaults standardUserDefaults] registerDefaults:@{
+            MGLScrollWheelZoomsMapViewDefaultKey: @NO,
+        }];
+    }
+}
+
 - (instancetype)initWithFrame:(NSRect)frameRect {
     if (self = [super initWithFrame:frameRect]) {
         [self commonInit];
@@ -232,35 +249,25 @@ public:
     // Set up cross-platform controllers and resources.
     _mbglView = new MGLMapViewImpl(self, [NSScreen mainScreen].backingScaleFactor);
     
-    // Place the cache in a location that can be shared among all the
-    // applications that embed the Mapbox OS X SDK.
-    NSURL *cacheDirectoryURL = [[NSFileManager defaultManager] URLForDirectory:NSCachesDirectory
-                                                                      inDomain:NSUserDomainMask
-                                                             appropriateForURL:nil
-                                                                        create:YES
-                                                                         error:nil];
-    cacheDirectoryURL = [cacheDirectoryURL URLByAppendingPathComponent:
-                         [[NSBundle mgl_frameworkBundle] bundleIdentifier]];
-    [[NSFileManager defaultManager] createDirectoryAtURL:cacheDirectoryURL
-                             withIntermediateDirectories:YES
-                                              attributes:nil
-                                                   error:nil];
-    NSURL *cacheURL = [cacheDirectoryURL URLByAppendingPathComponent:@"cache.db"];
-    NSString *cachePath = cacheURL ? cacheURL.path : @"";
-    _mbglFileSource = new mbgl::DefaultFileSource(cachePath.UTF8String, [[[[NSBundle mainBundle] resourceURL] path] UTF8String]);
+    // Delete the pre-offline ambient cache at
+    // ~/Library/Caches/com.mapbox.sdk.ios/cache.db.
+    NSURL *cachesDirectoryURL = [[NSFileManager defaultManager] URLForDirectory:NSCachesDirectory
+                                                                       inDomain:NSUserDomainMask
+                                                              appropriateForURL:nil
+                                                                         create:NO
+                                                                          error:nil];
+    cachesDirectoryURL = [cachesDirectoryURL URLByAppendingPathComponent:
+                          [NSBundle mgl_frameworkBundle].bundleIdentifier];
+    NSURL *legacyCacheURL = [cachesDirectoryURL URLByAppendingPathComponent:@"cache.db"];
+    [[NSFileManager defaultManager] removeItemAtURL:legacyCacheURL error:NULL];
     
-    _mbglMap = new mbgl::Map(*_mbglView, *_mbglFileSource, mbgl::MapMode::Continuous, mbgl::GLContextMode::Unique, mbgl::ConstrainMode::None);
+    mbgl::DefaultFileSource *mbglFileSource = [MGLOfflineStorage sharedOfflineStorage].mbglFileSource;
+    _mbglMap = new mbgl::Map(*_mbglView, *mbglFileSource, mbgl::MapMode::Continuous, mbgl::GLContextMode::Unique, mbgl::ConstrainMode::None, mbgl::ViewportMode::Default);
+    [self validateTileCacheSize];
     
     // Install the OpenGL layer. Interface Builder’s synchronous drawing means
     // we can’t display a map, so don’t even bother to have a map layer.
     self.layer = _isTargetingInterfaceBuilder ? [CALayer layer] : [MGLOpenGLLayer layer];
-    
-    // Observe for changes to the global access token (and find out the current one).
-    [[MGLAccountManager sharedManager] addObserver:self
-                                        forKeyPath:@"accessToken"
-                                           options:(NSKeyValueObservingOptionInitial |
-                                                    NSKeyValueObservingOptionNew)
-                                           context:NULL];
     
     // Notify map object when network reachability status changes.
     MGLReachability *reachability = [MGLReachability reachabilityForInternetConnection];
@@ -302,12 +309,12 @@ public:
     [(NSSegmentedCell *)_zoomControls.cell setTrackingMode:NSSegmentSwitchTrackingMomentary];
     _zoomControls.continuous = YES;
     _zoomControls.segmentCount = 2;
-    [_zoomControls setLabel:@"−" forSegment:0]; // U+2212 MINUS SIGN
+    [_zoomControls setLabel:NSLocalizedStringWithDefaultValue(@"ZOOM_OUT_LABEL", nil, nil, @"−", @"Label of Zoom Out button; U+2212 MINUS SIGN") forSegment:0];
     [(NSSegmentedCell *)_zoomControls.cell setTag:0 forSegment:0];
-    [(NSSegmentedCell *)_zoomControls.cell setToolTip:@"Zoom Out" forSegment:0];
-    [_zoomControls setLabel:@"+" forSegment:1];
+    [(NSSegmentedCell *)_zoomControls.cell setToolTip:NSLocalizedStringWithDefaultValue(@"ZOOM_OUT_TOOLTIP", nil, nil, @"Zoom Out", @"Tooltip of Zoom Out button") forSegment:0];
+    [_zoomControls setLabel:NSLocalizedStringWithDefaultValue(@"ZOOM_IN_LABEL", nil, nil, @"+", @"Label of Zoom In button") forSegment:1];
     [(NSSegmentedCell *)_zoomControls.cell setTag:1 forSegment:1];
-    [(NSSegmentedCell *)_zoomControls.cell setToolTip:@"Zoom In" forSegment:1];
+    [(NSSegmentedCell *)_zoomControls.cell setToolTip:NSLocalizedStringWithDefaultValue(@"ZOOM_IN_TOOLTIP", nil, nil, @"Zoom In", @"Tooltip of Zoom In button") forSegment:1];
     _zoomControls.target = self;
     _zoomControls.action = @selector(zoomInOrOut:);
     _zoomControls.controlSize = NSRegularControlSize;
@@ -340,7 +347,7 @@ public:
     logoImage.alignmentRect = NSInsetRect(logoImage.alignmentRect, 3, 3);
     _logoView.image = logoImage;
     _logoView.translatesAutoresizingMaskIntoConstraints = NO;
-    _logoView.accessibilityTitle = @"Mapbox";
+    _logoView.accessibilityTitle = NSLocalizedStringWithDefaultValue(@"MAP_A11Y_TITLE", nil, nil, @"Mapbox", @"Accessibility title");
     [self addSubview:_logoView];
 }
 
@@ -375,7 +382,6 @@ public:
 
 /// Adds gesture recognizers for manipulating the viewport and selecting annotations.
 - (void)installGestureRecognizers {
-    self.acceptsTouchEvents = YES;
     _scrollEnabled = YES;
     _zoomEnabled = YES;
     _rotateEnabled = YES;
@@ -388,10 +394,6 @@ public:
     NSClickGestureRecognizer *clickGestureRecognizer = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(handleClickGesture:)];
     clickGestureRecognizer.delaysPrimaryMouseButtonEvents = NO;
     [self addGestureRecognizer:clickGestureRecognizer];
-    
-    NSClickGestureRecognizer *secondaryClickGestureRecognizer = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(handleSecondaryClickGesture:)];
-    secondaryClickGestureRecognizer.buttonMask = 0x2;
-    [self addGestureRecognizer:secondaryClickGestureRecognizer];
     
     NSClickGestureRecognizer *doubleClickGestureRecognizer = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(handleDoubleClickGesture:)];
     doubleClickGestureRecognizer.numberOfClicksRequired = 2;
@@ -443,7 +445,6 @@ public:
 }
 
 - (void)dealloc {
-    [[MGLAccountManager sharedManager] removeObserver:self forKeyPath:@"accessToken"];
     [self.window removeObserver:self forKeyPath:@"contentLayoutRect"];
     [self.window removeObserver:self forKeyPath:@"titlebarAppearsTransparent"];
     
@@ -451,13 +452,12 @@ public:
     [self.calloutForSelectedAnnotation close];
     self.calloutForSelectedAnnotation = nil;
     
+    // Removing the annotations unregisters any outstanding KVO observers.
+    [self removeAnnotations:self.annotations];
+    
     if (_mbglMap) {
         delete _mbglMap;
         _mbglMap = nullptr;
-    }
-    if (_mbglFileSource) {
-        delete _mbglFileSource;
-        _mbglFileSource = nullptr;
     }
     if (_mbglView) {
         delete _mbglView;
@@ -465,16 +465,29 @@ public:
     }
 }
 
-- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(__unused void *)context {
-    // Synchronize mbgl::Map’s access token with the global one in MGLAccountManager.
-    if ([keyPath isEqualToString:@"accessToken"] && object == [MGLAccountManager sharedManager]) {
-        NSString *accessToken = change[NSKeyValueChangeNewKey];
-        if (![accessToken isKindOfClass:[NSNull class]]) {
-            _mbglFileSource->setAccessToken((std::string)accessToken.UTF8String);
-        }
-    } else if ([keyPath isEqualToString:@"contentLayoutRect"] ||
-               [keyPath isEqualToString:@"titlebarAppearsTransparent"]) {
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(__unused NSDictionary *)change context:(void *)context {
+    if ([keyPath isEqualToString:@"contentLayoutRect"] ||
+        [keyPath isEqualToString:@"titlebarAppearsTransparent"]) {
         [self adjustContentInsets];
+    } else if ([keyPath isEqualToString:@"coordinate"] &&
+               [object conformsToProtocol:@protocol(MGLAnnotation)] &&
+               ![object isKindOfClass:[MGLMultiPoint class]]) {
+        id <MGLAnnotation> annotation = object;
+        MGLAnnotationTag annotationTag = (MGLAnnotationTag)(NSUInteger)context;
+        // We can get here because a subclass registered itself as an observer
+        // of the coordinate key path of a non-multipoint annotation but failed
+        // to handle the change. This check deters us from treating the
+        // subclass’s context as an annotation tag. If the context happens to
+        // match a valid annotation tag, the annotation will be unnecessarily
+        // but safely updated.
+        if (annotation == [self annotationWithTag:annotationTag]) {
+            const mbgl::LatLng latLng = MGLLatLngFromLocationCoordinate2D(annotation.coordinate);
+            MGLAnnotationImage *annotationImage = [self imageOfAnnotationWithTag:annotationTag];
+            _mbglMap->updatePointAnnotation(annotationTag, { latLng, annotationImage.styleIconIdentifier.UTF8String ?: "" });
+            if (annotationTag == _selectedAnnotationTag) {
+                [self deselectAnnotation:annotation];
+            }
+        }
     }
 }
 
@@ -492,6 +505,8 @@ public:
     _delegateHasFillColorsForShapeAnnotations = [_delegate respondsToSelector:@selector(mapView:fillColorForPolygonAnnotation:)];
     _delegateHasLineWidthsForShapeAnnotations = [_delegate respondsToSelector:@selector(mapView:lineWidthForPolylineAnnotation:)];
     
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wundeclared-selector"
     if ([self.delegate respondsToSelector:@selector(mapView:regionWillChangeAnimated:)]) {
         NSLog(@"-mapView:regionWillChangeAnimated: is not supported by the OS X SDK, but %@ implements it anyways. "
               @"Please implement -[%@ mapView:cameraWillChangeAnimated:] instead.",
@@ -507,13 +522,14 @@ public:
               @"Please implement -[%@ mapView:cameraDidChangeAnimated:] instead.",
               NSStringFromClass([delegate class]), NSStringFromClass([delegate class]));
     }
+#pragma clang diagnostic pop
 }
 
 #pragma mark Style
 
 - (nonnull NSURL *)styleURL {
     NSString *styleURLString = @(_mbglMap->getStyleURL().c_str()).mgl_stringOrNilIfEmpty;
-    return styleURLString ? [NSURL URLWithString:styleURLString] : [MGLStyle streetsStyleURL];
+    return styleURLString ? [NSURL URLWithString:styleURLString] : [MGLStyle streetsStyleURLWithVersion:MGLStyleDefaultVersion];
 }
 
 - (void)setStyleURL:(nullable NSURL *)styleURL {
@@ -528,7 +544,7 @@ public:
         if (![MGLAccountManager accessToken]) {
             return;
         }
-        styleURL = [MGLStyle streetsStyleURL];
+        styleURL = [MGLStyle streetsStyleURLWithVersion:MGLStyleDefaultVersion];
     }
     
     if (![styleURL scheme]) {
@@ -551,7 +567,6 @@ public:
     [self deselectAnnotation:self.selectedAnnotation];
     if (!self.dormant && !newWindow) {
         self.dormant = YES;
-        _mbglMap->pause();
     }
     
     [self.window removeObserver:self forKeyPath:@"contentLayoutRect"];
@@ -561,7 +576,6 @@ public:
 - (void)viewDidMoveToWindow {
     NSWindow *window = self.window;
     if (self.dormant && window) {
-        _mbglMap->resume();
         self.dormant = NO;
     }
     
@@ -591,6 +605,9 @@ public:
 
 - (void)setFrame:(NSRect)frame {
     super.frame = frame;
+    if (!NSEqualRects(frame, self.frame)) {
+        [self validateTileCacheSize];
+    }
     if (!_isTargetingInterfaceBuilder) {
         _mbglMap->update(mbgl::Update::Dimensions);
     }
@@ -689,18 +706,47 @@ public:
 
 - (void)renderSync {
     if (!self.dormant) {
-        CGFloat zoomFactor   = _mbglMap->getMaxZoom() - _mbglMap->getMinZoom() + 1;
-        CGFloat cpuFactor    = (CGFloat)[NSProcessInfo processInfo].processorCount;
-        CGFloat memoryFactor = (CGFloat)[NSProcessInfo processInfo].physicalMemory / 1000 / 1000 / 1000;
-        CGFloat sizeFactor   = ((CGFloat)_mbglMap->getWidth() / mbgl::util::tileSize) * ((CGFloat)_mbglMap->getHeight() / mbgl::util::tileSize);
-        
-        NSUInteger cacheSize = zoomFactor * cpuFactor * memoryFactor * sizeFactor * 0.5;
-        
-        _mbglMap->setSourceTileCacheSize(cacheSize);
-        _mbglMap->renderSync();
-        
+        // Enable vertex buffer objects.
+        mbgl::gl::InitializeExtensions([](const char *name) {
+            static CFBundleRef framework = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.opengl"));
+            if (!framework) {
+                throw std::runtime_error("Failed to load OpenGL framework.");
+            }
+
+            CFStringRef str = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingASCII);
+            void *symbol = CFBundleGetFunctionPointerForName(framework, str);
+            CFRelease(str);
+
+            return reinterpret_cast<mbgl::gl::glProc>(symbol);
+        });
+
+        _mbglMap->render();
+
+        if (_isPrinting) {
+            _isPrinting = NO;
+            std::string png = encodePNG(_mbglView->readStillImage());
+            NSData *data = [[NSData alloc] initWithBytes:png.data() length:png.size()];
+            NSImage *image = [[NSImage alloc] initWithData:data];
+            [self performSelector:@selector(printWithImage:) withObject:image afterDelay:0];
+        }
+
 //        [self updateUserLocationAnnotationView];
     }
+}
+
+- (void)validateTileCacheSize {
+    if (!_mbglMap) {
+        return;
+    }
+    
+    CGFloat zoomFactor   = self.maximumZoomLevel - self.minimumZoomLevel + 1;
+    CGFloat cpuFactor    = [NSProcessInfo processInfo].processorCount;
+    CGFloat memoryFactor = (CGFloat)[NSProcessInfo processInfo].physicalMemory / 1000 / 1000 / 1000;
+    CGFloat sizeFactor   = (NSWidth(self.bounds) / mbgl::util::tileSize) * (NSHeight(self.bounds) / mbgl::util::tileSize);
+    
+    NSUInteger cacheSize = zoomFactor * cpuFactor * memoryFactor * sizeFactor * 0.5;
+    
+    _mbglMap->setSourceTileCacheSize(cacheSize);
 }
 
 - (void)invalidate {
@@ -908,11 +954,13 @@ public:
 - (void)setMinimumZoomLevel:(double)minimumZoomLevel
 {
     _mbglMap->setMinZoom(minimumZoomLevel);
+    [self validateTileCacheSize];
 }
 
 - (void)setMaximumZoomLevel:(double)maximumZoomLevel
 {
     _mbglMap->setMaxZoom(maximumZoomLevel);
+    [self validateTileCacheSize];
 }
 
 - (double)maximumZoomLevel {
@@ -968,14 +1016,8 @@ public:
 }
 
 - (MGLMapCamera *)camera {
-    CGFloat pitch = _mbglMap->getPitch();
-    CLLocationDistance altitude = MGLAltitudeForZoomLevel(self.zoomLevel, pitch,
-                                                          self.centerCoordinate.latitude,
-                                                          self.frame.size);
-    return [MGLMapCamera cameraLookingAtCenterCoordinate:self.centerCoordinate
-                                            fromDistance:altitude
-                                                   pitch:pitch
-                                                 heading:self.direction];
+    mbgl::EdgeInsets padding = MGLEdgeInsetsFromNSEdgeInsets(self.contentInsets);
+    return [self cameraForCameraOptions:_mbglMap->getCameraOptions(padding)];
 }
 
 - (void)setCamera:(MGLMapCamera *)camera {
@@ -1105,6 +1147,31 @@ public:
         [self didChangeValueForKey:@"visibleCoordinateBounds"];
     };
     _mbglMap->easeTo(cameraOptions, animationOptions);
+}
+
+- (MGLMapCamera *)cameraThatFitsCoordinateBounds:(MGLCoordinateBounds)bounds {
+    return [self cameraThatFitsCoordinateBounds:bounds edgePadding:NSEdgeInsetsZero];
+}
+
+- (MGLMapCamera *)cameraThatFitsCoordinateBounds:(MGLCoordinateBounds)bounds edgePadding:(NSEdgeInsets)insets {
+    mbgl::EdgeInsets padding = MGLEdgeInsetsFromNSEdgeInsets(insets);
+    padding += MGLEdgeInsetsFromNSEdgeInsets(self.contentInsets);
+    mbgl::CameraOptions cameraOptions = _mbglMap->cameraForLatLngBounds(MGLLatLngBoundsFromCoordinateBounds(bounds), padding);
+    return [self cameraForCameraOptions:cameraOptions];
+}
+
+- (MGLMapCamera *)cameraForCameraOptions:(const mbgl::CameraOptions &)cameraOptions {
+    CLLocationCoordinate2D centerCoordinate = MGLLocationCoordinate2DFromLatLng(cameraOptions.center ? *cameraOptions.center : _mbglMap->getLatLng());
+    double zoomLevel = cameraOptions.zoom ? *cameraOptions.zoom : self.zoomLevel;
+    CLLocationDirection direction = cameraOptions.angle ? -MGLDegreesFromRadians(*cameraOptions.angle) : self.direction;
+    CGFloat pitch = cameraOptions.pitch ? MGLDegreesFromRadians(*cameraOptions.pitch) : _mbglMap->getPitch();
+    CLLocationDistance altitude = MGLAltitudeForZoomLevel(zoomLevel, pitch,
+                                                          centerCoordinate.latitude,
+                                                          self.frame.size);
+    return [MGLMapCamera cameraLookingAtCenterCoordinate:centerCoordinate
+                                            fromDistance:altitude
+                                                   pitch:pitch
+                                                 heading:direction];
 }
 
 - (void)setAutomaticallyAdjustsContentInsets:(BOOL)automaticallyAdjustsContentInsets {
@@ -1274,7 +1341,8 @@ public:
 
 /// Click or tap to select an annotation.
 - (void)handleClickGesture:(NSClickGestureRecognizer *)gestureRecognizer {
-    if (gestureRecognizer.state != NSGestureRecognizerStateEnded) {
+    if (gestureRecognizer.state != NSGestureRecognizerStateEnded
+        || [self subviewContainingGesture:gestureRecognizer]) {
         return;
     }
     
@@ -1291,21 +1359,10 @@ public:
     }
 }
 
-/// Tap with two fingers (“right-click”) to zoom out.
-- (void)handleSecondaryClickGesture:(NSClickGestureRecognizer *)gestureRecognizer {
-    if (!self.zoomEnabled || gestureRecognizer.state != NSGestureRecognizerStateEnded) {
-        return;
-    }
-    
-    _mbglMap->cancelTransitions();
-    
-    NSPoint gesturePoint = [gestureRecognizer locationInView:self];
-    [self scaleBy:0.5 atPoint:gesturePoint animated:YES];
-}
-
 /// Double-click or double-tap to zoom in.
 - (void)handleDoubleClickGesture:(NSClickGestureRecognizer *)gestureRecognizer {
-    if (!self.zoomEnabled || gestureRecognizer.state != NSGestureRecognizerStateEnded) {
+    if (!self.zoomEnabled || gestureRecognizer.state != NSGestureRecognizerStateEnded
+        || [self subviewContainingGesture:gestureRecognizer]) {
         return;
     }
     
@@ -1322,6 +1379,7 @@ public:
     
     _mbglMap->cancelTransitions();
     
+    // Tap with two fingers (“right-click”) to zoom out on mice but not trackpads.
     NSPoint gesturePoint = [self convertPoint:event.locationInWindow fromView:nil];
     [self scaleBy:0.5 atPoint:gesturePoint animated:YES];
 }
@@ -1354,14 +1412,23 @@ public:
 
 - (void)scrollWheel:(NSEvent *)event {
     // https://developer.apple.com/library/mac/releasenotes/AppKit/RN-AppKitOlderNotes/#10_7Dragging
-    if (event.phase == NSEventPhaseNone && event.momentumPhase == NSEventPhaseNone && !event.hasPreciseScrollingDeltas) {
+    BOOL isScrollWheel = event.phase == NSEventPhaseNone && event.momentumPhase == NSEventPhaseNone && !event.hasPreciseScrollingDeltas;
+    if (isScrollWheel || [[NSUserDefaults standardUserDefaults] boolForKey:MGLScrollWheelZoomsMapViewDefaultKey]) {
         // A traditional, vertical scroll wheel zooms instead of panning.
-        if (self.zoomEnabled && std::abs(event.scrollingDeltaX) < std::abs(event.scrollingDeltaY)) {
-            _mbglMap->cancelTransitions();
-            
-            NSPoint gesturePoint = [self convertPoint:event.locationInWindow fromView:nil];
-            double zoomDelta = event.scrollingDeltaY / 4;
-            [self scaleBy:exp2(zoomDelta) atPoint:gesturePoint animated:YES];
+        if (self.zoomEnabled) {
+            const double delta =
+                event.scrollingDeltaY / ([event hasPreciseScrollingDeltas] ? 100 : 10);
+            if (delta != 0) {
+                double scale = 2.0 / (1.0 + std::exp(-std::abs(delta)));
+
+                // Zooming out.
+                if (delta < 0) {
+                    scale = 1.0 / scale;
+                }
+
+                NSPoint gesturePoint = [self convertPoint:event.locationInWindow fromView:nil];
+                [self scaleBy:scale atPoint:gesturePoint animated:NO];
+            }
         }
     } else if (self.scrollEnabled
                && _magnificationGestureRecognizer.state == NSGestureRecognizerStatePossible
@@ -1380,6 +1447,20 @@ public:
             [self offsetCenterCoordinateBy:NSMakePoint(x, y) animated:NO];
         }
     }
+}
+
+/// Returns the subview that the gesture is located in.
+- (NSView *)subviewContainingGesture:(NSGestureRecognizer *)gestureRecognizer {
+    if (NSPointInRect([gestureRecognizer locationInView:self.compass], self.compass.bounds)) {
+        return self.compass;
+    }
+    if (NSPointInRect([gestureRecognizer locationInView:self.zoomControls], self.zoomControls.bounds)) {
+        return self.zoomControls;
+    }
+    if (NSPointInRect([gestureRecognizer locationInView:self.attributionView], self.attributionView.bounds)) {
+        return self.attributionView;
+    }
+    return nil;
 }
 
 #pragma mark Keyboard events
@@ -1523,15 +1604,27 @@ public:
     
     BOOL delegateHasImagesForAnnotations = [self.delegate respondsToSelector:@selector(mapView:imageForAnnotation:)];
     
+    NSMutableArray *userPoints = [NSMutableArray array];
     std::vector<mbgl::PointAnnotation> points;
+    NSMutableArray *userShapes = [NSMutableArray array];
     std::vector<mbgl::ShapeAnnotation> shapes;
+    NSMutableArray *annotationImages = [NSMutableArray arrayWithCapacity:annotations.count];
     
     for (id <MGLAnnotation> annotation in annotations) {
         NSAssert([annotation conformsToProtocol:@protocol(MGLAnnotation)], @"Annotation does not conform to MGLAnnotation");
         
         if ([annotation isKindOfClass:[MGLMultiPoint class]]) {
             // The multipoint knows how to style itself (with the map view’s help).
-            [(MGLMultiPoint *)annotation addShapeAnnotationObjectToCollection:shapes withDelegate:self];
+            MGLMultiPoint *multiPoint = (MGLMultiPoint *)annotation;
+            if (!multiPoint.pointCount) {
+                continue;
+            }
+            shapes.emplace_back(multiPoint.annotationSegments, [multiPoint shapeAnnotationPropertiesObjectWithDelegate:self]);
+            [userShapes addObject:annotation];
+        } else if ([annotation isKindOfClass:[MGLMultiPolyline class]]
+                   || [annotation isKindOfClass:[MGLMultiPolygon class]]
+                   || [annotation isKindOfClass:[MGLShapeCollection class]]) {
+            continue;
         } else {
             MGLAnnotationImage *annotationImage = nil;
             if (delegateHasImagesForAnnotations) {
@@ -1541,25 +1634,23 @@ public:
                 annotationImage = [self dequeueReusableAnnotationImageWithIdentifier:MGLDefaultStyleMarkerSymbolName];
             }
             if (!annotationImage) {
-                // Create a default annotation image that depicts a round pin
-                // rising from the center, with a shadow slightly below center.
-                // The alignment rect therefore excludes the bottom half.
-                NSImage *image = MGLDefaultMarkerImage();
-                NSRect alignmentRect = image.alignmentRect;
-                alignmentRect.origin.y = NSMidY(alignmentRect);
-                alignmentRect.size.height /= 2;
-                image.alignmentRect = alignmentRect;
-                annotationImage = [MGLAnnotationImage annotationImageWithImage:image
-                                                               reuseIdentifier:MGLDefaultStyleMarkerSymbolName];
+                annotationImage = self.defaultAnnotationImage;
+            }
+            
+            NSString *symbolName = annotationImage.styleIconIdentifier;
+            if (!symbolName) {
+                symbolName = [MGLAnnotationSpritePrefix stringByAppendingString:annotationImage.reuseIdentifier];
+                annotationImage.styleIconIdentifier = symbolName;
             }
             
             if (!self.annotationImagesByIdentifier[annotationImage.reuseIdentifier]) {
                 self.annotationImagesByIdentifier[annotationImage.reuseIdentifier] = annotationImage;
                 [self installAnnotationImage:annotationImage];
             }
+            [annotationImages addObject:annotationImage];
             
-            NSString *symbolName = [MGLAnnotationSpritePrefix stringByAppendingString:annotationImage.reuseIdentifier];
-            points.emplace_back(MGLLatLngFromLocationCoordinate2D(annotation.coordinate), symbolName ? [symbolName UTF8String] : "");
+            [userPoints addObject:annotation];
+            points.emplace_back(MGLLatLngFromLocationCoordinate2D(annotation.coordinate), symbolName.UTF8String ?: "");
             
             // Opt into potentially expensive tooltip tracking areas.
             if (annotation.toolTip.length) {
@@ -1570,24 +1661,37 @@ public:
     
     // Add any point annotations to mbgl and our own index.
     if (points.size()) {
-        std::vector<MGLAnnotationTag> pointAnnotationTags = _mbglMap->addPointAnnotations(points);
+        std::vector<MGLAnnotationTag> annotationTags = _mbglMap->addPointAnnotations(points);
         
-        for (size_t i = 0; i < pointAnnotationTags.size(); ++i) {
+        for (size_t i = 0; i < annotationTags.size(); ++i) {
+            MGLAnnotationTag annotationTag = annotationTags[i];
+            MGLAnnotationImage *annotationImage = annotationImages[i];
+            annotationImage.styleIconIdentifier = @(points[i].icon.c_str());
+            id <MGLAnnotation> annotation = userPoints[i];
+            
             MGLAnnotationContext context;
-            context.annotation = annotations[i];
-            context.symbolIdentifier = @(points[i].icon.c_str());
-            _annotationContextsByAnnotationTag[pointAnnotationTags[i]] = context;
+            context.annotation = annotation;
+            context.imageReuseIdentifier = annotationImage.reuseIdentifier;
+            _annotationContextsByAnnotationTag[annotationTag] = context;
+            
+            if ([annotation isKindOfClass:[NSObject class]]) {
+                NSAssert(![annotation isKindOfClass:[MGLMultiPoint class]], @"Point annotation should not be MGLMultiPoint.");
+                [(NSObject *)annotation addObserver:self forKeyPath:@"coordinate" options:0 context:(void *)(NSUInteger)annotationTag];
+            }
         }
     }
     
     // Add any shape annotations to mbgl and our own index.
     if (shapes.size()) {
-        std::vector<MGLAnnotationTag> shapeAnnotationTags = _mbglMap->addShapeAnnotations(shapes);
+        std::vector<MGLAnnotationTag> annotationTags = _mbglMap->addShapeAnnotations(shapes);
         
-        for (size_t i = 0; i < shapeAnnotationTags.size(); ++i) {
+        for (size_t i = 0; i < annotationTags.size(); ++i) {
+            MGLAnnotationTag annotationTag = annotationTags[i];
+            id <MGLAnnotation> annotation = userShapes[i];
+            
             MGLAnnotationContext context;
-            context.annotation = annotations[i];
-            _annotationContextsByAnnotationTag[shapeAnnotationTags[i]] = context;
+            context.annotation = annotation;
+            _annotationContextsByAnnotationTag[annotationTag] = context;
         }
     }
     
@@ -1596,9 +1700,25 @@ public:
     [self updateAnnotationTrackingAreas];
 }
 
+/// Initializes and returns a default annotation image that depicts a round pin
+/// rising from the center, with a shadow slightly below center. The alignment
+/// rect therefore excludes the bottom half.
+- (MGLAnnotationImage *)defaultAnnotationImage {
+    NSImage *image = MGLDefaultMarkerImage();
+    NSRect alignmentRect = image.alignmentRect;
+    alignmentRect.origin.y = NSMidY(alignmentRect);
+    alignmentRect.size.height /= 2;
+    image.alignmentRect = alignmentRect;
+    return [MGLAnnotationImage annotationImageWithImage:image
+                                        reuseIdentifier:MGLDefaultStyleMarkerSymbolName];
+}
+
 /// Sends the raw pixel data of the annotation image’s image to mbgl and
 /// calculates state needed for hit testing later.
 - (void)installAnnotationImage:(MGLAnnotationImage *)annotationImage {
+    NSString *iconIdentifier = annotationImage.styleIconIdentifier;
+    self.annotationImagesByIdentifier[annotationImage.reuseIdentifier] = annotationImage;
+    
     NSImage *image = annotationImage.image;
     NSSize size = image.size;
     if (size.width == 0 || size.height == 0 || !image.valid) {
@@ -1620,8 +1740,7 @@ public:
     std::copy(rep.bitmapData, rep.bitmapData + cPremultipliedImage.size(), cPremultipliedImage.data.get());
     auto cSpriteImage = std::make_shared<mbgl::SpriteImage>(std::move(cPremultipliedImage),
                                                             (float)(rep.pixelsWide / size.width));
-    NSString *symbolName = [MGLAnnotationSpritePrefix stringByAppendingString:annotationImage.reuseIdentifier];
-    _mbglMap->addAnnotationIcon(symbolName.UTF8String, cSpriteImage);
+    _mbglMap->addAnnotationIcon(iconIdentifier.UTF8String, cSpriteImage);
     
     // Create a slop area with a “radius” equal to the annotation image’s entire
     // size, allowing the eventual click to be on any point within this image.
@@ -1664,6 +1783,11 @@ public:
         }
         
         _annotationContextsByAnnotationTag.erase(annotationTag);
+        
+        if ([annotation isKindOfClass:[NSObject class]] &&
+            ![annotation isKindOfClass:[MGLMultiPoint class]]) {
+            [(NSObject *)annotation removeObserver:self forKeyPath:@"coordinate" context:(void *)(NSUInteger)annotationTag];
+        }
     }
     
     [self willChangeValueForKey:@"annotations"];
@@ -1674,11 +1798,6 @@ public:
 }
 
 - (nullable MGLAnnotationImage *)dequeueReusableAnnotationImageWithIdentifier:(NSString *)identifier {
-    // This prefix is used to avoid collisions with style-defined sprites in
-    // mbgl, but reusable identifiers are never prefixed.
-    if ([identifier hasPrefix:MGLAnnotationSpritePrefix]) {
-        identifier = [identifier substringFromIndex:MGLAnnotationSpritePrefix.length];
-    }
     return self.annotationImagesByIdentifier[identifier];
 }
 
@@ -1789,8 +1908,8 @@ public:
             }
             
             // Choose the first nearby annotation.
-            if (_annotationsNearbyLastClick.size()) {
-                hitAnnotationTag = _annotationsNearbyLastClick.front();
+            if (nearbyAnnotations.size()) {
+                hitAnnotationTag = nearbyAnnotations.front();
             }
         }
     }
@@ -1937,6 +2056,9 @@ public:
     }
     NSImage *image = [self imageOfAnnotationWithTag:annotationTag].image;
     if (!image) {
+        image = [self dequeueReusableAnnotationImageWithIdentifier:MGLDefaultStyleMarkerSymbolName].image;
+    }
+    if (!image) {
         return NSZeroRect;
     }
     
@@ -1960,7 +2082,7 @@ public:
         return nil;
     }
     
-    NSString *customSymbol = _annotationContextsByAnnotationTag.at(annotationTag).symbolIdentifier;
+    NSString *customSymbol = _annotationContextsByAnnotationTag.at(annotationTag).imageReuseIdentifier;
     NSString *symbolName = customSymbol.length ? customSymbol : MGLDefaultStyleMarkerSymbolName;
     
     return [self dequeueReusableAnnotationImageWithIdentifier:symbolName];
@@ -2098,10 +2220,8 @@ public:
 }
 
 - (NSString *)view:(__unused NSView *)view stringForToolTip:(__unused NSToolTipTag)tag point:(__unused NSPoint)point userData:(void *)data {
-    if ((NSUInteger)data >= MGLAnnotationTagNotFound) {
-        return nil;
-    }
-    MGLAnnotationTag annotationTag = (NSUInteger)data;
+    NSAssert((NSUInteger)data < MGLAnnotationTagNotFound, @"Invalid annotation tag in tooltip rect user data.");
+    MGLAnnotationTag annotationTag = (MGLAnnotationTag)MIN((NSUInteger)data, MGLAnnotationTagNotFound);
     id <MGLAnnotation> annotation = [self annotationWithTag:annotationTag];
     return annotation.toolTip;
 }
@@ -2133,6 +2253,55 @@ public:
             [self addCursorRect:annotationRect cursor:annotationImage.cursor];
         }
     }
+}
+
+#pragma mark Data
+
+- (NS_ARRAY_OF(id <MGLFeature>) *)visibleFeaturesAtPoint:(NSPoint)point {
+    return [self visibleFeaturesAtPoint:point inStyleLayersWithIdentifiers:nil];
+}
+
+- (NS_ARRAY_OF(id <MGLFeature>) *)visibleFeaturesAtPoint:(NSPoint)point inStyleLayersWithIdentifiers:(NS_SET_OF(NSString *) *)styleLayerIdentifiers {
+    // Cocoa origin is at the lower-left corner.
+    mbgl::ScreenCoordinate screenCoordinate = { point.x, NSHeight(self.bounds) - point.y };
+    
+    mbgl::optional<std::vector<std::string>> optionalLayerIDs;
+    if (styleLayerIdentifiers) {
+        __block std::vector<std::string> layerIDs;
+        layerIDs.reserve(styleLayerIdentifiers.count);
+        [styleLayerIdentifiers enumerateObjectsUsingBlock:^(NSString * _Nonnull identifier, BOOL * _Nonnull stop) {
+            layerIDs.push_back(identifier.UTF8String);
+        }];
+        optionalLayerIDs = layerIDs;
+    }
+    
+    std::vector<mbgl::Feature> features = _mbglMap->queryRenderedFeatures(screenCoordinate, optionalLayerIDs);
+    return MGLFeaturesFromMBGLFeatures(features);
+}
+
+- (NS_ARRAY_OF(id <MGLFeature>) *)visibleFeaturesInRect:(NSRect)rect {
+    return [self visibleFeaturesInRect:rect inStyleLayersWithIdentifiers:nil];
+}
+
+- (NS_ARRAY_OF(id <MGLFeature>) *)visibleFeaturesInRect:(NSRect)rect inStyleLayersWithIdentifiers:(NS_SET_OF(NSString *) *)styleLayerIdentifiers {
+    // Cocoa origin is at the lower-left corner.
+    mbgl::ScreenBox screenBox = {
+        { NSMinX(rect), NSHeight(self.bounds) - NSMaxY(rect) },
+        { NSMaxX(rect), NSHeight(self.bounds) - NSMinY(rect) },
+    };
+    
+    mbgl::optional<std::vector<std::string>> optionalLayerIDs;
+    if (styleLayerIdentifiers) {
+        __block std::vector<std::string> layerIDs;
+        layerIDs.reserve(styleLayerIdentifiers.count);
+        [styleLayerIdentifiers enumerateObjectsUsingBlock:^(NSString * _Nonnull identifier, BOOL * _Nonnull stop) {
+            layerIDs.push_back(identifier.UTF8String);
+        }];
+        optionalLayerIDs = layerIDs;
+    }
+    
+    std::vector<mbgl::Feature> features = _mbglMap->queryRenderedFeatures(screenBox, optionalLayerIDs);
+    return MGLFeaturesFromMBGLFeatures(features);
 }
 
 #pragma mark Interface Builder methods
@@ -2182,7 +2351,7 @@ public:
         convertedPoint.x,
         // mbgl origin is at the top-left corner.
         NSHeight(self.bounds) - convertedPoint.y,
-    });
+    }).wrapped();
 }
 
 - (NSRect)convertCoordinateBounds:(MGLCoordinateBounds)bounds toRectToView:(nullable NSView *)view {
@@ -2255,6 +2424,12 @@ public:
     if (options & mbgl::MapDebugOptions::Collision) {
         mask |= MGLMapDebugCollisionBoxesMask;
     }
+    if (options & mbgl::MapDebugOptions::Wireframe) {
+        mask |= MGLMapDebugWireframesMask;
+    }
+    if (options & mbgl::MapDebugOptions::StencilClip) {
+        mask |= MGLMapDebugStencilBufferMask;
+    }
     return mask;
 }
 
@@ -2272,6 +2447,12 @@ public:
     if (debugMask & MGLMapDebugCollisionBoxesMask) {
         options |= mbgl::MapDebugOptions::Collision;
     }
+    if (debugMask & MGLMapDebugWireframesMask) {
+        options |= mbgl::MapDebugOptions::Wireframe;
+    }
+    if (debugMask & MGLMapDebugStencilBufferMask) {
+        options |= mbgl::MapDebugOptions::StencilClip;
+    }
     _mbglMap->setDebug(options);
 }
 
@@ -2280,85 +2461,39 @@ class MGLMapViewImpl : public mbgl::View {
 public:
     MGLMapViewImpl(MGLMapView *nativeView_, const float scaleFactor_)
         : nativeView(nativeView_), scaleFactor(scaleFactor_) {}
-    virtual ~MGLMapViewImpl() {}
-    
-    
+
     float getPixelRatio() const override {
         return scaleFactor;
     }
-    
+
     std::array<uint16_t, 2> getSize() const override {
         return {{ static_cast<uint16_t>(nativeView.bounds.size.width),
-            static_cast<uint16_t>(nativeView.bounds.size.height) }};
+                  static_cast<uint16_t>(nativeView.bounds.size.height) }};
     }
-    
+
     std::array<uint16_t, 2> getFramebufferSize() const override {
         NSRect bounds = [nativeView convertRectToBacking:nativeView.bounds];
         return {{ static_cast<uint16_t>(bounds.size.width),
-            static_cast<uint16_t>(bounds.size.height) }};
+                  static_cast<uint16_t>(bounds.size.height) }};
     }
-    
-    void notify() override {}
-    
+
     void notifyMapChange(mbgl::MapChange change) override {
-        assert([[NSThread currentThread] isMainThread]);
         [nativeView notifyMapChange:change];
     }
-    
+
+    void invalidate() override {
+        [nativeView invalidate];
+    }
+
     void activate() override {
         MGLOpenGLLayer *layer = (MGLOpenGLLayer *)nativeView.layer;
-        if ([NSOpenGLContext currentContext] != layer.openGLContext) {
-            // Enable our OpenGL context on the Map thread.
-            [layer.openGLContext makeCurrentContext];
-            
-            // Enable vertex buffer objects.
-            mbgl::gl::InitializeExtensions([](const char *name) {
-                static CFBundleRef framework = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.opengl"));
-                if (!framework) {
-                    throw std::runtime_error("Failed to load OpenGL framework.");
-                }
-                
-                CFStringRef str = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingASCII);
-                void *symbol = CFBundleGetFunctionPointerForName(framework, str);
-                CFRelease(str);
-                
-                return reinterpret_cast<mbgl::gl::glProc>(symbol);
-            });
-        }
+        [layer.openGLContext makeCurrentContext];
     }
-    
+
     void deactivate() override {
         [NSOpenGLContext clearCurrentContext];
     }
-    
-    void invalidate() override {
-        [nativeView performSelectorOnMainThread:@selector(invalidate)
-                                     withObject:nil
-                                  waitUntilDone:NO];
-    }
-    
-    void beforeRender() override {
-        // This normally gets called right away by mbgl::Map, but only on the
-        // main thread. OpenGL contexts and extensions are thread-local, so this
-        // has to happen on the Map thread too.
-        activate();
-        
-//        auto size = getFramebufferSize();
-//        MBGL_CHECK_ERROR(glViewport(0, 0, size[0], size[1]));
-    }
-    
-    void afterRender() override {
-        if (nativeView->_isPrinting) {
-            nativeView->_isPrinting = NO;
-            std::string png = encodePNG(readStillImage());
-            NSData *data = [[NSData alloc] initWithBytes:png.data() length:png.size()];
-            NSImage *image = [[NSImage alloc] initWithData:data];
-            [nativeView performSelectorOnMainThread:@selector(printWithImage:)
-                                         withObject:image
-                                      waitUntilDone:NO];
-        }
-    }
-    
+
     mbgl::PremultipliedImage readStillImage() override {
         auto size = getFramebufferSize();
         const unsigned int w = size[0];
@@ -2367,7 +2502,7 @@ public:
         mbgl::PremultipliedImage image { w, h };
         MBGL_CHECK_ERROR(glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, image.data.get()));
         
-        const int stride = image.stride();
+        const size_t stride = image.stride();
         auto tmp = std::make_unique<uint8_t[]>(stride);
         uint8_t *rgba = image.data.get();
         for (int i = 0, j = h - 1; i < j; i++, j--) {

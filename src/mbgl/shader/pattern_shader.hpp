@@ -1,5 +1,4 @@
-#ifndef MBGL_SHADER_SHADER_PATTERN
-#define MBGL_SHADER_SHADER_PATTERN
+#pragma once
 
 #include <mbgl/shader/shader.hpp>
 #include <mbgl/shader/uniform.hpp>
@@ -20,12 +19,10 @@ public:
     Uniform<GLfloat>                u_opacity         = {"u_opacity",         *this};
     Uniform<GLfloat>                u_mix             = {"u_mix",             *this};
     Uniform<GLint>                  u_image           = {"u_image",           *this};
-    UniformMatrix<3>                u_patternmatrix_a = {"u_patternmatrix_a", *this};
-    UniformMatrix<3>                u_patternmatrix_b = {"u_patternmatrix_b", *this};
+    Uniform<std::array<GLfloat, 2>> u_patternscale_a  = {"u_patternscale_a",  *this};
+    Uniform<std::array<GLfloat, 2>> u_patternscale_b  = {"u_patternscale_b",  *this};
     Uniform<std::array<GLfloat, 2>> u_offset_a        = {"u_offset_a",        *this};
     Uniform<std::array<GLfloat, 2>> u_offset_b        = {"u_offset_b",        *this};
 };
 
 } // namespace mbgl
-
-#endif

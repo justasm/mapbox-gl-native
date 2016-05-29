@@ -1,5 +1,4 @@
-#ifndef MBGL_TEXT_COLLISION_TILE
-#define MBGL_TEXT_COLLISION_TILE
+#pragma once
 
 #include <mbgl/text/collision_feature.hpp>
 #include <mbgl/text/placement_config.hpp>
@@ -30,15 +29,19 @@ namespace bgm = bg::model;
 namespace bgi = bg::index;
 typedef bgm::point<float, 2, bg::cs::cartesian> CollisionPoint;
 typedef bgm::box<CollisionPoint> Box;
-typedef std::pair<Box, CollisionBox> CollisionTreeBox;
+typedef std::tuple<Box, CollisionBox, IndexedSubfeature> CollisionTreeBox;
 typedef bgi::rtree<CollisionTreeBox, bgi::linear<16, 4>> Tree;
+
+class IndexedSubfeature;
 
 class CollisionTile {
 public:
     explicit CollisionTile(PlacementConfig);
 
-    float placeFeature(const CollisionFeature& feature, const bool allowOverlap, const bool avoidEdges);
-    void insertFeature(CollisionFeature& feature, const float minPlacementScale);
+    float placeFeature(const CollisionFeature&, const bool allowOverlap, const bool avoidEdges);
+    void insertFeature(CollisionFeature&, const float minPlacementScale, const bool ignorePlacement);
+
+    std::vector<IndexedSubfeature> queryRenderedSymbols(const mapbox::geometry::box<int16_t>&, const float scale);
 
     const PlacementConfig config;
 
@@ -48,16 +51,15 @@ public:
 
 private:
     float findPlacementScale(float minPlacementScale,
-            const vec2<float>& anchor, const CollisionBox& box,
-            const vec2<float>& blockingAnchor, const CollisionBox& blocking);
-    Box getTreeBox(const vec2<float>& anchor, const CollisionBox& box);
+            const Point<float>& anchor, const CollisionBox& box,
+            const Point<float>& blockingAnchor, const CollisionBox& blocking);
+    Box getTreeBox(const Point<float>& anchor, const CollisionBox& box, const float scale = 1.0);
 
     Tree tree;
+    Tree ignoredTree;
     std::array<float, 4> rotationMatrix;
     std::array<float, 4> reverseRotationMatrix;
     std::array<CollisionBox, 4> edges;
 };
 
 } // namespace mbgl
-
-#endif

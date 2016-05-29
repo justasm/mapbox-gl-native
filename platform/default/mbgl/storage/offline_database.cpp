@@ -4,7 +4,6 @@
 #include <mbgl/util/io.hpp>
 #include <mbgl/util/string.hpp>
 #include <mbgl/util/chrono.hpp>
-#include <mbgl/map/tile_id.hpp>
 #include <mbgl/platform/log.hpp>
 
 #include "sqlite3.hpp"
@@ -13,9 +12,6 @@
 namespace mbgl {
 
 using namespace mapbox::sqlite;
-
-// If you change the schema you must write a migration from the previous version.
-static const uint32_t schemaVersion = 2;
 
 OfflineDatabase::Statement::~Statement() {
     stmt.reset();
@@ -50,34 +46,53 @@ void OfflineDatabase::ensureSchema() {
         try {
             connect(ReadWrite);
 
-            {
-                auto userVersionStmt = db->prepare("PRAGMA user_version");
-                userVersionStmt.run();
-                switch (userVersionStmt.get<int>(0)) {
-                case 0: break; // cache-only database; ok to delete
-                case 1: break; // cache-only database; ok to delete
-                case 2: return;
-                default: throw std::runtime_error("unknown schema version");
-                }
+            switch (userVersion()) {
+            case 0: break; // cache-only database; ok to delete
+            case 1: break; // cache-only database; ok to delete
+            case 2: migrateToVersion3(); // fall through
+            case 3: return;
+            default: throw std::runtime_error("unknown schema version");
             }
 
             removeExisting();
             connect(ReadWrite | Create);
         } catch (mapbox::sqlite::Exception& ex) {
-            if (ex.code == SQLITE_CANTOPEN) {
+            if (ex.code != SQLITE_CANTOPEN && ex.code != SQLITE_NOTADB) {
+                Log::Error(Event::Database, "Unexpected error connecting to database: %s", ex.what());
+                throw;
+            }
+
+            try {
+                if (ex.code == SQLITE_NOTADB) {
+                    removeExisting();
+                }
                 connect(ReadWrite | Create);
-            } else if (ex.code == SQLITE_NOTADB) {
-                removeExisting();
-                connect(ReadWrite | Create);
+            } catch (...) {
+                Log::Error(Event::Database, "Unexpected error creating database: %s", util::toString(std::current_exception()).c_str());
+                throw;
             }
         }
     }
 
-    #include "offline_schema.cpp.include"
+    try {
+        #include "offline_schema.cpp.include"
 
-    connect(ReadWrite | Create);
-    db->exec(schema);
-    db->exec("PRAGMA user_version = " + util::toString(schemaVersion));
+        connect(ReadWrite | Create);
+
+        // If you change the schema you must write a migration from the previous version.
+        db->exec("PRAGMA auto_vacuum = INCREMENTAL");
+        db->exec(schema);
+        db->exec("PRAGMA user_version = 3");
+    } catch (...) {
+        Log::Error(Event::Database, "Unexpected error creating database schema: %s", util::toString(std::current_exception()).c_str());
+        throw;
+    }
+}
+
+int OfflineDatabase::userVersion() {
+    auto stmt = db->prepare("PRAGMA user_version");
+    stmt.run();
+    return stmt.get<int>(0);
 }
 
 void OfflineDatabase::removeExisting() {
@@ -90,6 +105,12 @@ void OfflineDatabase::removeExisting() {
     } catch (util::IOException& ex) {
         Log::Error(Event::Database, ex.code, ex.what());
     }
+}
+
+void OfflineDatabase::migrateToVersion3() {
+    db->exec("PRAGMA auto_vacuum = INCREMENTAL");
+    db->exec("VACUUM");
+    db->exec("PRAGMA user_version = 3");
 }
 
 OfflineDatabase::Statement OfflineDatabase::getStatement(const char * sql) {
@@ -136,7 +157,7 @@ std::pair<bool, uint64_t> OfflineDatabase::putInternal(const Resource& resource,
     }
 
     if (evict_ && !evict(size)) {
-        Log::Warning(Event::Database, "Unable to make space for entry");
+        Log::Debug(Event::Database, "Unable to make space for entry");
         return { false, 0 };
     }
 
@@ -160,7 +181,7 @@ optional<std::pair<Response, uint64_t>> OfflineDatabase::getResource(const Resou
     Statement accessedStmt = getStatement(
         "UPDATE resources SET accessed = ?1 WHERE url = ?2");
 
-    accessedStmt->bind(1, SystemClock::now());
+    accessedStmt->bind(1, util::now());
     accessedStmt->bind(2, resource.url);
     accessedStmt->run();
 
@@ -180,8 +201,8 @@ optional<std::pair<Response, uint64_t>> OfflineDatabase::getResource(const Resou
     uint64_t size = 0;
 
     response.etag     = stmt->get<optional<std::string>>(0);
-    response.expires  = stmt->get<optional<SystemTimePoint>>(1);
-    response.modified = stmt->get<optional<SystemTimePoint>>(2);
+    response.expires  = stmt->get<optional<Timestamp>>(1);
+    response.modified = stmt->get<optional<Timestamp>>(2);
 
     optional<std::string> data = stmt->get<optional<std::string>>(3);
     if (!data) {
@@ -208,7 +229,7 @@ bool OfflineDatabase::putResource(const Resource& resource,
             "    expires  = ?2 "
             "WHERE url    = ?3 ");
 
-        update->bind(1, SystemClock::now());
+        update->bind(1, util::now());
         update->bind(2, response.expires);
         update->bind(3, resource.url);
         update->run();
@@ -216,6 +237,10 @@ bool OfflineDatabase::putResource(const Resource& resource,
     }
 
     // We can't use REPLACE because it would change the id value.
+
+    // Begin an immediate-mode transaction to ensure that two writers do not attempt
+    // to INSERT a resource at the same moment.
+    Transaction transaction(*db, Transaction::Immediate);
 
     Statement update = getStatement(
         "UPDATE resources "
@@ -232,7 +257,7 @@ bool OfflineDatabase::putResource(const Resource& resource,
     update->bind(2, response.etag);
     update->bind(3, response.expires);
     update->bind(4, response.modified);
-    update->bind(5, SystemClock::now());
+    update->bind(5, util::now());
     update->bind(8, resource.url);
 
     if (response.noContent) {
@@ -245,6 +270,7 @@ bool OfflineDatabase::putResource(const Resource& resource,
 
     update->run();
     if (db->changes() != 0) {
+        transaction.commit();
         return false;
     }
 
@@ -257,7 +283,7 @@ bool OfflineDatabase::putResource(const Resource& resource,
     insert->bind(3, response.etag);
     insert->bind(4, response.expires);
     insert->bind(5, response.modified);
-    insert->bind(6, SystemClock::now());
+    insert->bind(6, util::now());
 
     if (response.noContent) {
         insert->bind(7, nullptr);
@@ -268,6 +294,8 @@ bool OfflineDatabase::putResource(const Resource& resource,
     }
 
     insert->run();
+    transaction.commit();
+
     return true;
 }
 
@@ -281,7 +309,7 @@ optional<std::pair<Response, uint64_t>> OfflineDatabase::getTile(const Resource:
         "  AND y            = ?5 "
         "  AND z            = ?6 ");
 
-    accessedStmt->bind(1, SystemClock::now());
+    accessedStmt->bind(1, util::now());
     accessedStmt->bind(2, tile.urlTemplate);
     accessedStmt->bind(3, tile.pixelRatio);
     accessedStmt->bind(4, tile.x);
@@ -313,8 +341,8 @@ optional<std::pair<Response, uint64_t>> OfflineDatabase::getTile(const Resource:
     uint64_t size = 0;
 
     response.etag     = stmt->get<optional<std::string>>(0);
-    response.expires  = stmt->get<optional<SystemTimePoint>>(1);
-    response.modified = stmt->get<optional<SystemTimePoint>>(2);
+    response.expires  = stmt->get<optional<Timestamp>>(1);
+    response.modified = stmt->get<optional<Timestamp>>(2);
 
     optional<std::string> data = stmt->get<optional<std::string>>(3);
     if (!data) {
@@ -345,7 +373,7 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
             "  AND y            = ?6 "
             "  AND z            = ?7 ");
 
-        update->bind(1, SystemClock::now());
+        update->bind(1, util::now());
         update->bind(2, response.expires);
         update->bind(3, tile.urlTemplate);
         update->bind(4, tile.pixelRatio);
@@ -357,6 +385,10 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
     }
 
     // We can't use REPLACE because it would change the id value.
+
+    // Begin an immediate-mode transaction to ensure that two writers do not attempt
+    // to INSERT a resource at the same moment.
+    Transaction transaction(*db, Transaction::Immediate);
 
     Statement update = getStatement(
         "UPDATE tiles "
@@ -375,7 +407,7 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
     update->bind(1, response.modified);
     update->bind(2, response.etag);
     update->bind(3, response.expires);
-    update->bind(4, SystemClock::now());
+    update->bind(4, util::now());
     update->bind(7, tile.urlTemplate);
     update->bind(8, tile.pixelRatio);
     update->bind(9, tile.x);
@@ -392,6 +424,7 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
 
     update->run();
     if (db->changes() != 0) {
+        transaction.commit();
         return false;
     }
 
@@ -407,7 +440,7 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
     insert->bind(6, response.modified);
     insert->bind(7, response.etag);
     insert->bind(8, response.expires);
-    insert->bind(9, SystemClock::now());
+    insert->bind(9, util::now());
 
     if (response.noContent) {
         insert->bind(10, nullptr);
@@ -418,6 +451,8 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
     }
 
     insert->run();
+    transaction.commit();
+
     return true;
 }
 
@@ -458,6 +493,7 @@ void OfflineDatabase::deleteRegion(OfflineRegion&& region) {
     stmt->run();
 
     evict(0);
+    db->exec("PRAGMA incremental_vacuum");
 
     // Ensure that the cached offlineTileCount value is recalculated.
     offlineMapboxTileCount = {};
@@ -571,26 +607,37 @@ OfflineRegionDefinition OfflineDatabase::getRegionDefinition(int64_t regionID) {
 OfflineRegionStatus OfflineDatabase::getRegionCompletedStatus(int64_t regionID) {
     OfflineRegionStatus result;
 
-    Statement stmt = getStatement(
-        "SELECT COUNT(*), SUM(size) FROM ( "
-        "  SELECT LENGTH(data) as size "
-        "  FROM region_resources, resources "
-        "  WHERE region_id = ?1 "
-        "  AND resource_id = resources.id "
-        "  UNION ALL "
-        "  SELECT LENGTH(data) as size "
-        "  FROM region_tiles, tiles "
-        "  WHERE region_id = ?1 "
-        "  AND tile_id = tiles.id "
-        ") ");
+    std::tie(result.completedResourceCount, result.completedResourceSize)
+        = getCompletedResourceCountAndSize(regionID);
+    std::tie(result.completedTileCount, result.completedTileSize)
+        = getCompletedTileCountAndSize(regionID);
 
-    stmt->bind(1, regionID);
-    stmt->run();
-
-    result.completedResourceCount = stmt->get<int64_t>(0);
-    result.completedResourceSize  = stmt->get<int64_t>(1);
+    result.completedResourceCount += result.completedTileCount;
+    result.completedResourceSize += result.completedTileSize;
 
     return result;
+}
+
+std::pair<int64_t, int64_t> OfflineDatabase::getCompletedResourceCountAndSize(int64_t regionID) {
+    Statement stmt = getStatement(
+        "SELECT COUNT(*), SUM(LENGTH(data)) "
+        "FROM region_resources, resources "
+        "WHERE region_id = ?1 "
+        "AND resource_id = resources.id ");
+    stmt->bind(1, regionID);
+    stmt->run();
+    return { stmt->get<int64_t>(0), stmt->get<int64_t>(1) };
+}
+
+std::pair<int64_t, int64_t> OfflineDatabase::getCompletedTileCountAndSize(int64_t regionID) {
+    Statement stmt = getStatement(
+        "SELECT COUNT(*), SUM(LENGTH(data)) "
+        "FROM region_tiles, tiles "
+        "WHERE region_id = ?1 "
+        "AND tile_id = tiles.id ");
+    stmt->bind(1, regionID);
+    stmt->run();
+    return { stmt->get<int64_t>(0), stmt->get<int64_t>(1) };
 }
 
 template <class T>
@@ -613,10 +660,6 @@ T OfflineDatabase::getPragma(const char * sql) {
 bool OfflineDatabase::evict(uint64_t neededFreeSize) {
     uint64_t pageSize = getPragma<int64_t>("PRAGMA page_size");
     uint64_t pageCount = getPragma<int64_t>("PRAGMA page_count");
-
-    if (pageSize * pageCount > maximumCacheSize) {
-        Log::Warning(mbgl::Event::Database, "Current size is larger than the maximum size. Database won't get truncated.");
-    }
 
     auto usedSize = [&] {
         return pageSize * (pageCount - getPragma<int64_t>("PRAGMA freelist_count"));

@@ -31,15 +31,15 @@ $ ./gradlew cC -p MapboxGLAndroidSDKTestApp
 Then:
 * Go to your AWS Console and choose Device Farm.
 * Create a new project, e.g. `MapboxGLAndroidSDKTestApp`
-* On step 1, upload the APK in `mapbox-gl-native/android/java/MapboxGLAndroidSDKTestApp/build/outputs/apk/MapboxGLAndroidSDKTestApp-debug-unaligned.apk`
-* On step 2, choose Instrumentation, test filter is `com.mapbox.mapboxgl.testapp.MainActivityTest` and upload the APK in `mapbox-gl-native/android/java/MapboxGLAndroidSDKTestApp/build/outputs/apk/MapboxGLAndroidSDKTestApp-debug-androidTest-unaligned.apk`
+* On step 1, upload the APK in `mapbox-gl-native/platform/android/MapboxGLAndroidSDKTestApp/build/outputs/apk/MapboxGLAndroidSDKTestApp-debug-unaligned.apk`
+* On step 2, choose Instrumentation, test filter is `com.mapbox.mapboxgl.testapp.MainActivityTest` and upload the APK in `mapbox-gl-native/platform/android/MapboxGLAndroidSDKTestApp/build/outputs/apk/MapboxGLAndroidSDKTestApp-debug-androidTest-unaligned.apk`
 * On step 3, choose a device pool. E.g. Top Devices
 * On step 4, customize your device state (if needed)
 * Finally, confirm the configuration and run the tests.
 
 On Step 2, you can also separate by commas different classes: `com.mapbox.mapboxgl.testapp.MainActivityTest,com.mapbox.mapboxgl.testapp.MainActivityScreenTest`
 
-If you have no tests for your app, or want to test some random user behaviour,
+If you have no tests for your app, or want to test some random user behavior,
 you can just choose "Built-in: Fuzz" in step 2.
 
 ### Code coverage
@@ -59,7 +59,7 @@ You can generate JaCoCo reports from espresso tests by
 - running the gradle task `createMockDebugCoverageReport` when executing tests.
 
 ## Running Espresso test automatically on AWS Device Farm
-To automatically execute Espresso tests as part of our CI build, we have created a Python [script](https://github.com/mapbox/mapbox-gl-native/blob/aws-devicelab/android/scripts/devicefarm.py).
+To automatically execute Espresso tests as part of our CI build, we have created a Python script called [`devicefarm.py`](https://github.com/mapbox/mapbox-gl-native/blob/master/platform/android/tests/scripts/devicefarm.py).
 
 This script is responsible for:
  - uploading an APK + test APK

@@ -40,6 +40,11 @@ static CGFloat const tipWidth = 10.0;
 
 - (void)presentCalloutFromRect:(CGRect)rect inView:(UIView *)view constrainedToView:(UIView *)constrainedView animated:(BOOL)animated
 {
+    if ([self.delegate respondsToSelector:@selector(calloutViewWillAppear:)])
+    {
+        [self.delegate performSelector:@selector(calloutViewWillAppear:) withObject:self];
+    }
+    
     [view addSubview:self];
     // prepare title label
     if ([self.representedObject respondsToSelector:@selector(title)])
@@ -54,6 +59,11 @@ static CGFloat const tipWidth = 10.0;
     CGFloat frameOriginY = rect.origin.y - frameHeight;
     self.frame = CGRectMake(frameOriginX, frameOriginY,
                             frameWidth, frameHeight);
+    
+    if ([self.delegate respondsToSelector:@selector(calloutViewDidAppear:)])
+    {
+        [self.delegate performSelector:@selector(calloutViewDidAppear:) withObject:self];
+    }
 }
 
 - (void)dismissCalloutAnimated:(BOOL)animated

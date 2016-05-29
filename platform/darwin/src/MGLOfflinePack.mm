@@ -5,7 +5,6 @@
 #import "MGLTilePyramidOfflineRegion.h"
 
 #include <mbgl/storage/default_file_source.hpp>
-#include <mbgl/util/string.hpp>
 
 /**
  Assert that the current offline pack is valid.
@@ -38,8 +37,8 @@ private:
 
 @interface MGLOfflinePack ()
 
+@property (nonatomic, weak, nullable) id <MGLOfflinePackDelegate> delegate;
 @property (nonatomic, nullable, readwrite) mbgl::OfflineRegion *mbglOfflineRegion;
-@property (nonatomic, readwrite) MGLOfflinePackState state;
 @property (nonatomic, readwrite) MGLOfflinePackProgress progress;
 
 @end
@@ -47,11 +46,11 @@ private:
 @implementation MGLOfflinePack
 
 - (instancetype)init {
-    [NSException raise:@"Method unavailable"
-                format:
-     @"-[MGLOfflinePack init] is unavailable. "
-     @"Use +[MGLOfflineStorage addPackForRegion:withContext:completionHandler:] instead."];
-    return nil;
+    if (self = [super init]) {
+        _state = MGLOfflinePackStateInvalid;
+        NSLog(@"%s called; did you mean to call +[MGLOfflineStorage addPackForRegion:withContext:completionHandler:] instead?", __PRETTY_FUNCTION__);
+    }
+    return self;
 }
 
 - (instancetype)initWithMBGLRegion:(mbgl::OfflineRegion *)region {
@@ -66,10 +65,7 @@ private:
 }
 
 - (void)dealloc {
-    if (_mbglOfflineRegion && _state != MGLOfflinePackStateInvalid) {
-        mbgl::DefaultFileSource *mbglFileSource = [[MGLOfflineStorage sharedOfflineStorage] mbglFileSource];
-        mbglFileSource->setOfflineRegionObserver(*_mbglOfflineRegion, nullptr);
-    }
+    NSAssert(_state == MGLOfflinePackStateInvalid, @"MGLOfflinePack was not invalided prior to deallocation.");
 }
 
 - (id <MGLOfflineRegion>)region {
@@ -105,6 +101,8 @@ private:
     NSAssert(_state != MGLOfflinePackStateInvalid, @"Cannot invalidate an already invalid offline pack.");
     
     self.state = MGLOfflinePackStateInvalid;
+    mbgl::DefaultFileSource *mbglFileSource = [[MGLOfflineStorage sharedOfflineStorage] mbglFileSource];
+    mbglFileSource->setOfflineRegionObserver(*self.mbglOfflineRegion, nullptr);
     self.mbglOfflineRegion = nil;
 }
 
@@ -155,13 +153,13 @@ private:
     MGLOfflinePackProgress progress;
     progress.countOfResourcesCompleted = status.completedResourceCount;
     progress.countOfBytesCompleted = status.completedResourceSize;
+    progress.countOfTilesCompleted = status.completedTileCount;
+    progress.countOfTileBytesCompleted = status.completedTileSize;
     progress.countOfResourcesExpected = status.requiredResourceCount;
     progress.maximumResourcesExpected = status.requiredResourceCountIsPrecise ? status.requiredResourceCount : UINT64_MAX;
     self.progress = progress;
     
-    if ([self.delegate respondsToSelector:@selector(offlinePack:progressDidChange:)]) {
-        [self.delegate offlinePack:self progressDidChange:progress];
-    }
+    [self.delegate offlinePack:self progressDidChange:progress];
 }
 
 NSError *MGLErrorFromResponseError(mbgl::Response::Error error) {
@@ -187,6 +185,8 @@ NSError *MGLErrorFromResponseError(mbgl::Response::Error error) {
     }];
 }
 
+@end
+
 void MBGLOfflineRegionObserver::statusChanged(mbgl::OfflineRegionStatus status) {
     dispatch_async(dispatch_get_main_queue(), ^{
         [pack offlineRegionStatusDidChange:status];
@@ -195,18 +195,12 @@ void MBGLOfflineRegionObserver::statusChanged(mbgl::OfflineRegionStatus status) 
 
 void MBGLOfflineRegionObserver::responseError(mbgl::Response::Error error) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if ([pack.delegate respondsToSelector:@selector(offlinePack:didReceiveError:)]) {
-            [pack.delegate offlinePack:pack didReceiveError:MGLErrorFromResponseError(error)];
-        }
+        [pack.delegate offlinePack:pack didReceiveError:MGLErrorFromResponseError(error)];
     });
 }
 
 void MBGLOfflineRegionObserver::mapboxTileCountLimitExceeded(uint64_t limit) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if ([pack.delegate respondsToSelector:@selector(offlinePack:didReceiveMaximumAllowedMapboxTiles:)]) {
-            [pack.delegate offlinePack:pack didReceiveMaximumAllowedMapboxTiles:limit];
-        }
+        [pack.delegate offlinePack:pack didReceiveMaximumAllowedMapboxTiles:limit];
     });
 }
-
-@end

@@ -1,172 +1,308 @@
-export BUILDTYPE ?= Release
-export BUILD_TEST ?= 1
-export BUILD_RENDER ?= 1
-export BUILD_OFFLINE ?= 1
-export ENABLE_COVERAGE ?= 0
+export BUILDTYPE ?= Debug
 
-# Determine build platform
 ifeq ($(shell uname -s), Darwin)
-export BUILD = osx
-export JOBS ?= $(shell sysctl -n hw.ncpu)
+  HOST_PLATFORM = osx
+  export JOBS ?= $(shell sysctl -n hw.ncpu)
 else ifeq ($(shell uname -s), Linux)
-export BUILD = linux
-export JOBS ?= $(shell grep --count processor /proc/cpuinfo)
+  HOST_PLATFORM = linux
+  export JOBS ?= $(shell grep --count processor /proc/cpuinfo)
 else
-$(error Cannot determine build platform)
+  $(error Cannot determine host platform)
 endif
-export BUILD_VERSION = $(shell uname -m)
 
-RUN =  +@$(MAKE) -f scripts/main.mk
+ifeq ($(V), 1)
+  export XCPRETTY
+else
+  export XCPRETTY ?= | xcpretty
+endif
 
-default: ; @printf "You must specify a valid target\n"
+default: test-$(HOST_PLATFORM)
+
+ifneq (,$(wildcard .git/.))
+.mason:
+	git submodule update --init
+else
+.mason: ;
+endif
+
+node_modules: package.json
+	npm update # Install dependencies but don't run our own install script.
+
+GYP = deps/run_gyp --depth=. -Goutput_dir=.
+
+CONFIG_DEPENDENCIES = .mason configure
+
+# Depend on gyp includes plus directories, so that projects are regenerated when
+# files are added or removed.
+GYP_DEPENDENCIES = mbgl.gypi test/test.gypi bin/*.gypi $(shell find src include -type d) node_modules
 
 #### OS X targets ##############################################################
 
-ifeq ($(BUILD),osx)
-.PHONY: osx xosx nosx run-osx run-xosx
-osx: ; $(RUN) HOST=osx HOST_VERSION=x86_64 Xcode/osxapp
-xosx: osx
-nosx: osx
-run-osx: osx ; @"gyp/build/$(BUILDTYPE)/Mapbox GL.app/Contents/MacOS/Mapbox GL"
-run-xosx: run-osx
+OSX_OUTPUT_PATH = build/osx
+OSX_PROJ_PATH = $(OSX_OUTPUT_PATH)/platform/osx/platform.xcodeproj
+OSX_WORK_PATH = platform/osx/osx.xcworkspace
+OSX_USER_DATA_PATH = $(OSX_WORK_PATH)/xcuserdata/$(USER).xcuserdatad
 
-.PHONY: Xcode/osx Xcode/ios
-Xcode/ios: ; $(RUN) HOST=ios Xcode/__project__
-Xcode/osx: ; $(RUN) HOST=osx HOST_VERSION=x86_64 Xcode/__project__
+$(OSX_OUTPUT_PATH)/config.gypi: platform/osx/scripts/configure.sh $(CONFIG_DEPENDENCIES)
+	./configure $< $@ osx
 
-.PHONY: xproj iproj
-xproj: Xcode/osx ; @open ./build/osx-x86_64/gyp/osx.xcodeproj
-iproj: Xcode/ios ; @open ./build/ios-all/gyp/ios.xcodeproj
+$(OSX_OUTPUT_PATH)/mbgl.xcconfig: $(OSX_OUTPUT_PATH)/config.gypi
+	./scripts/export-xcconfig.py $< $@
 
-.PHONY: ios ibench isim
-ios ibench isim: export XCODEBUILD_ARGS += PROVISIONING_PROFILE="$$(PROVISIONING_PROFILE)"
+$(OSX_PROJ_PATH): platform/osx/platform.gyp $(OSX_OUTPUT_PATH)/config.gypi $(OSX_OUTPUT_PATH)/mbgl.xcconfig $(GYP_DEPENDENCIES)
+	$(GYP) -f xcode --generator-output=$(OSX_OUTPUT_PATH) $<
 
-ios: export XCODEBUILD_ARGS += -sdk iphoneos ARCHS="arm64 armv7 armv7s"
-ios: ; $(RUN) HOST=ios Xcode/iosapp
+osx: $(OSX_PROJ_PATH)
+	set -o pipefail && xcodebuild \
+	  -derivedDataPath $(OSX_OUTPUT_PATH) \
+	  -configuration $(BUILDTYPE) \
+	  -workspace $(OSX_WORK_PATH) -scheme CI build $(XCPRETTY)
 
-isim: export XCODEBUILD_ARGS += -sdk iphonesimulator ARCHS="x86_64 i386"
-isim: ; $(RUN) HOST=ios Xcode/iosapp
+xproj: $(OSX_PROJ_PATH) $(OSX_WORK_PATH)
+	mkdir -p "$(OSX_USER_DATA_PATH)"
+	cp platform/osx/WorkspaceSettings.xcsettings "$(OSX_USER_DATA_PATH)/WorkspaceSettings.xcsettings"
+	open $(OSX_WORK_PATH)
 
-ibench: export XCODEBUILD_ARGS += -sdk iphoneos ARCHS="arm64"
-ibench: ; $(RUN) HOST=ios Xcode/ios-bench
+test-osx: osx node_modules
+	ulimit -c unlimited && ($(OSX_OUTPUT_PATH)/Build/Products/$(BUILDTYPE)/test & pid=$$! && wait $$pid \
+	  || (lldb -c /cores/core.$$pid --batch --one-line 'thread backtrace all' --one-line 'quit' && exit 1))
+	set -o pipefail && xcodebuild \
+	  -derivedDataPath $(OSX_OUTPUT_PATH) \
+	  -configuration $(BUILDTYPE) \
+	  -workspace $(OSX_WORK_PATH) -scheme CI test $(XCPRETTY)
 
-.PHONY: ipackage ipackage-strip ipackage-sim itest
-ipackage: Xcode/ios ; @JOBS=$(JOBS) BITCODE=$(BITCODE) FORMAT=$(FORMAT) BUILD_DEVICE=$(BUILD_DEVICE) SYMBOLS=$(SYMBOLS) ./platform/ios/scripts/package.sh
-ipackage-strip: Xcode/ios ; @JOBS=$(JOBS) BITCODE=$(BITCODE) FORMAT=$(FORMAT) BUILD_DEVICE=$(BUILD_DEVICE) SYMBOLS=NO ./platform/ios/scripts/package.sh
-ipackage-sim: Xcode/ios ; @JOBS=$(JOBS) BUILDTYPE=Debug BITCODE=$(BITCODE) FORMAT=dynamic BUILD_DEVICE=false SYMBOLS=$(SYMBOLS) ./platform/ios/scripts/package.sh
-iframework: Xcode/ios ; @JOBS=$(JOBS) BITCODE=$(BITCODE) FORMAT=dynamic BUILD_DEVICE=$(BUILD_DEVICE) SYMBOLS=$(SYMBOLS) ./platform/ios/scripts/package.sh
-ifabric: Xcode/ios ; @JOBS=$(JOBS) BITCODE=$(BITCODE) FORMAT=$(FORMAT) BUILD_DEVICE=$(BUILD_DEVICE) SYMBOLS=NO BUNDLE_RESOURCES=YES ./platform/ios/scripts/package.sh
-itest: ipackage-sim ; ./platform/ios/scripts/test.sh
-idocument: ; OUTPUT=$(OUTPUT) ./platform/ios/scripts/document.sh
+xpackage: $(OSX_PROJ_PATH)
+	SYMBOLS=$(SYMBOLS) ./platform/osx/scripts/package.sh
 
-.PHONY: xpackage xpackage-strip xctest
-xpackage: Xcode/osx ; @JOBS=$(JOBS) ./platform/osx/scripts/package.sh
-xpackage-strip: Xcode/osx ; @JOBS=$(JOBS) ./platform/osx/scripts/package.sh strip
-xctest: Xcode/osx ; @JOBS=$(JOBS) ./platform/osx/scripts/test.sh
-endif
+xdocument:
+	OUTPUT=$(OUTPUT) ./platform/osx/scripts/document.sh
 
-#### All platforms targets #####################################################
+genstrings:
+	genstrings -u -o platform/osx/sdk/Base.lproj platform/darwin/src/*.{m,mm}
+	genstrings -u -o platform/osx/sdk/Base.lproj platform/osx/src/*.{m,mm}
+	genstrings -u -o platform/ios/resources/Base.lproj platform/ios/src/*.{m,mm}
+	-find platform/ios/resources platform/osx/sdk -path '*/Base.lproj/*.strings' -exec \
+		textutil -convert txt -extension strings -inputencoding UTF-16 -encoding UTF-8 {} \;
+	mv platform/osx/sdk/Base.lproj/Foundation.strings platform/darwin/resources/Base.lproj/
 
-.PHONY: linux run-linux run-valgrind-linux
-linux: ; $(RUN) Makefile/linuxapp
-nlinux: ; $(RUN) Ninja/linuxapp
-run-linux: linux ; (cd build/$(BUILD)-$(BUILD_VERSION)/$(BUILDTYPE) && ./mapbox-gl)
-run-valgrind-linux: linux
-	(cd build/$(BUILD)-$(BUILD_VERSION)/$(BUILDTYPE) && valgrind --leak-check=full --suppressions=../../../scripts/valgrind.sup ./mapbox-gl)
+#### iOS targets ##############################################################
 
+IOS_OUTPUT_PATH = build/ios
+IOS_PROJ_PATH = $(IOS_OUTPUT_PATH)/platform/ios/platform.xcodeproj
+IOS_WORK_PATH = platform/ios/ios.xcworkspace
+IOS_USER_DATA_PATH = $(IOS_WORK_PATH)/xcuserdata/$(USER).xcuserdatad
 
-.PHONY: config compdb tidy
-config: ; $(RUN) config
-# Generates a compilation database with ninja for use in clang tooling
-compdb: ; $(RUN) Ninja/compdb
-tidy: ; $(RUN) tidy
+$(IOS_OUTPUT_PATH)/config.gypi: platform/ios/scripts/configure.sh $(CONFIG_DEPENDENCIES)
+	./configure $< $@ ios
 
-.PHONY: android android-lib
-# Builds a particular android architecture.
-android-lib-%: ; $(RUN) HOST=android HOST_VERSION=$* Makefile/androidapp
+$(IOS_OUTPUT_PATH)/mbgl.xcconfig: $(IOS_OUTPUT_PATH)/config.gypi
+	./scripts/export-xcconfig.py $< $@
 
-# Builds the default Android library
-android-lib: ; $(RUN) HOST=android Makefile/androidapp
+$(IOS_PROJ_PATH): platform/ios/platform.gyp $(IOS_OUTPUT_PATH)/config.gypi $(IOS_OUTPUT_PATH)/mbgl.xcconfig $(GYP_DEPENDENCIES)
+	$(GYP) -f xcode --generator-output=$(IOS_OUTPUT_PATH) $<
 
-# Builds the selected/default Android library
-android: android-lib
+ios: $(IOS_PROJ_PATH)
+	set -o pipefail && xcodebuild \
+	  ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
+	  -derivedDataPath $(IOS_OUTPUT_PATH) \
+	  -configuration $(BUILDTYPE) -sdk iphonesimulator \
+	  -destination 'platform=iOS Simulator,name=iPhone 6,OS=latest' \
+	  -workspace $(IOS_WORK_PATH) -scheme CI build $(XCPRETTY)
+
+iproj: $(IOS_PROJ_PATH)
+	mkdir -p "$(IOS_USER_DATA_PATH)"
+	cp platform/ios/WorkspaceSettings.xcsettings "$(IOS_USER_DATA_PATH)/WorkspaceSettings.xcsettings"
+	open $(IOS_WORK_PATH)
+
+test-ios: ios
+	ios-sim start --devicetypeid 'com.apple.CoreSimulator.SimDeviceType.iPhone-6,9.3'
+	ios-sim launch $(IOS_OUTPUT_PATH)/Build/Products/$(BUILDTYPE)-iphonesimulator/ios-test.app --verbose --devicetypeid 'com.apple.CoreSimulator.SimDeviceType.iPhone-6,9.3'
+	set -o pipefail && xcodebuild \
+	  ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
+	  -derivedDataPath $(IOS_OUTPUT_PATH) \
+	  -configuration $(BUILDTYPE) -sdk iphonesimulator \
+	  -destination 'platform=iOS Simulator,name=iPhone 6,OS=latest' \
+	  -workspace $(IOS_WORK_PATH) -scheme CI test $(XCPRETTY)
+
+ipackage: $(IOS_PROJ_PATH)
+	BITCODE=$(BITCODE) FORMAT=$(FORMAT) BUILD_DEVICE=$(BUILD_DEVICE) SYMBOLS=$(SYMBOLS) \
+	./platform/ios/scripts/package.sh
+
+ipackage-strip: $(IOS_PROJ_PATH)
+	BITCODE=$(BITCODE) FORMAT=$(FORMAT) BUILD_DEVICE=$(BUILD_DEVICE) SYMBOLS=NO \
+	./platform/ios/scripts/package.sh
+
+ipackage-sim: $(IOS_PROJ_PATH)
+	BUILDTYPE=Debug BITCODE=$(BITCODE) FORMAT=dynamic BUILD_DEVICE=false SYMBOLS=$(SYMBOLS) \
+	./platform/ios/scripts/package.sh
+
+iframework: $(IOS_PROJ_PATH)
+	BITCODE=$(BITCODE) FORMAT=dynamic BUILD_DEVICE=$(BUILD_DEVICE) SYMBOLS=$(SYMBOLS) \
+	./platform/ios/scripts/package.sh
+
+ifabric: $(IOS_PROJ_PATH)
+	BITCODE=$(BITCODE) FORMAT=static BUILD_DEVICE=$(BUILD_DEVICE) SYMBOLS=NO SELF_CONTAINED=YES \
+	./platform/ios/scripts/package.sh
+
+idocument:
+	OUTPUT=$(OUTPUT) ./platform/ios/scripts/document.sh
+
+#### Android targets #####################################################
+
+ANDROID_ENV = platform/android/scripts/toolchain.sh
+ANDROID_ABIS = arm-v5 arm-v7 arm-v8 x86 x86-64 mips
+
+define ANDROID_RULES
+build/android-$1/config.gypi: platform/android/scripts/configure.sh $(CONFIG_DEPENDENCIES)
+	$$(shell $(ANDROID_ENV) $1) ./configure $$< $$@ android $1
+
+build/android-$1/Makefile: platform/android/platform.gyp build/android-$1/config.gypi $(GYP_DEPENDENCIES)
+	$$(shell $(ANDROID_ENV) $1) $(GYP) -f make-android -I build/android-$1/config.gypi \
+	  --generator-output=build/android-$1 $$<
+
+android-lib-$1: build/android-$1/Makefile
+	$$(shell $(ANDROID_ENV) $1) $(MAKE) -j$(JOBS) -C build/android-$1 all
+
+apackage: android-lib-$1
+endef
+
+$(foreach abi,$(ANDROID_ABIS),$(eval $(call ANDROID_RULES,$(abi))))
+
+android: android-lib-arm-v7
 	cd platform/android && ./gradlew --parallel --max-workers=$(JOBS) assemble$(BUILDTYPE)
 
-# Builds all android architectures for distribution.
-apackage: android-lib-arm-v5 android-lib-arm-v7 android-lib-arm-v8
-apackage: android-lib-x86 android-lib-x86-64
-apackage: android-lib-mips
+test-android:
+	cd platform/android && ./gradlew testReleaseUnitTest --continue
+
+apackage:
 	cd platform/android && ./gradlew --parallel-threads=$(JOBS) assemble$(BUILDTYPE)
 
-# Builds the Node.js library
-.PHONY: node
-node: ; $(RUN) HTTP=none ASSET=none Makefile/node
+#### Node targets #####################################################
 
+NODE_PRE_GYP = $(shell npm bin)/node-pre-gyp
+NODE_OUTPUT_PATH = build/node-$(HOST_PLATFORM)-$(shell uname -m)
 
-.PHONY: Xcode/node
-Xcode/node: ; $(RUN) HTTP=none ASSET=none Xcode/node
+$(NODE_OUTPUT_PATH)/config.gypi: platform/$(HOST_PLATFORM)/scripts/configure.sh $(CONFIG_DEPENDENCIES)
+	./configure $< $@ $(HOST_PLATFORM) $(shell uname -m)
 
-.PHONY: xnode
-xnode: Xcode/node ; @open ./build/binding.xcodeproj
-nproj:
-	$(RUN) HTTP=none ASSET=none node/xproj
-	@open ./build/binding.xcodeproj
+node: $(NODE_OUTPUT_PATH)/config.gypi node_modules $(GYP_DEPENDENCIES)
+	$(NODE_PRE_GYP) configure --clang -- -I$< \
+	  -Dcoverage= -Dlibuv_cflags= -Dlibuv_ldflags= -Dlibuv_static_libs=
+	$(NODE_PRE_GYP) build --clang
 
-.PHONY: test
-test: ; $(RUN) Makefile/test
-test-%: ; $(RUN) test-$*
-ifeq ($(BUILD),osx)
-xtest: ; $(RUN) HOST=osx HOST_VERSION=x86_64 Xcode/test
+xnode: $(NODE_OUTPUT_PATH)/config.gypi $(GYP_DEPENDENCIES)
+	$(NODE_PRE_GYP) configure --clang -- -I$< \
+	  -Dcoverage= -Dlibuv_cflags= -Dlibuv_ldflags= -Dlibuv_static_libs= \
+	  -f xcode
+	./platform/node/scripts/create_node_scheme.sh "node test" "`npm bin tape`/tape platform/node/test/js/**/*.test.js"
+	./platform/node/scripts/create_node_scheme.sh "npm run test-suite" "platform/node/test/render.test.js"
+	open ./build/binding.xcodeproj
+
+.PHONY: test-node
+test-node: node
+	npm test
+	npm run test-suite
+
+#### Qt targets #####################################################
+
+QT_OUTPUT_PATH = build/qt-$(HOST_PLATFORM)-$(shell uname -m)
+QT_MAKEFILE = $(QT_OUTPUT_PATH)/Makefile
+
+# Cross compilation support
+QT_ENV = $(shell MASON_PLATFORM_VERSION=$(shell uname -m) ./platform/qt/scripts/toolchain.sh)
+
+$(QT_OUTPUT_PATH)/config.gypi: platform/qt/scripts/configure.sh $(CONFIG_DEPENDENCIES)
+	$(QT_ENV) ./configure $< $@ $(HOST_PLATFORM) $(shell uname -m)
+
+$(QT_MAKEFILE): platform/qt/platform.gyp $(QT_OUTPUT_PATH)/config.gypi $(GYP_DEPENDENCIES)
+	$(QT_ENV) $(GYP) -f make -I $(QT_OUTPUT_PATH)/config.gypi \
+	  --generator-output=$(QT_OUTPUT_PATH) $<
+
+qt-lib: $(QT_MAKEFILE)
+	$(QT_ENV) $(MAKE) -j$(JOBS) -C $(QT_OUTPUT_PATH) qt-lib
+
+qt-app: $(QT_MAKEFILE)
+	$(QT_ENV) $(MAKE) -j$(JOBS) -C $(QT_OUTPUT_PATH) qt-app
+
+qt-qml-app: $(QT_MAKEFILE)
+	$(QT_ENV) $(MAKE) -j$(JOBS) -C $(QT_OUTPUT_PATH) qt-qml-app
+
+test-qt: $(QT_MAKEFILE) node_modules
+	$(QT_ENV) $(MAKE) -j$(JOBS) -C $(QT_OUTPUT_PATH) test
+	$(GDB) $(QT_OUTPUT_PATH)/$(BUILDTYPE)/test --gtest_catch_exceptions=0 --gtest_filter=*
+
+run-qt-app: qt-app
+	cd $(QT_OUTPUT_PATH)/$(BUILDTYPE) && ./qmapboxgl
+
+run-qt-qml-app: qt-qml-app
+	cd $(QT_OUTPUT_PATH)/$(BUILDTYPE) && ./qquickmapboxgl
+
+#### Linux targets #####################################################
+
+LINUX_OUTPUT_PATH = build/linux-$(shell uname -m)
+LINUX_MAKEFILE = $(LINUX_OUTPUT_PATH)/Makefile
+
+$(LINUX_OUTPUT_PATH)/config.gypi: platform/linux/scripts/configure.sh $(CONFIG_DEPENDENCIES)
+	./configure $< $@ linux $(shell uname -m)
+
+$(LINUX_MAKEFILE): platform/linux/platform.gyp $(LINUX_OUTPUT_PATH)/config.gypi $(GYP_DEPENDENCIES)
+	$(GYP) -f make -I $(LINUX_OUTPUT_PATH)/config.gypi \
+	  --generator-output=$(LINUX_OUTPUT_PATH) $<
+
+linux: glfw-app render offline
+
+test-linux: node_modules test-*
+
+render: $(LINUX_MAKEFILE)
+	$(MAKE) -j$(JOBS) -C $(LINUX_OUTPUT_PATH) mbgl-render
+
+offline: $(LINUX_MAKEFILE)
+	$(MAKE) -j$(JOBS) -C $(LINUX_OUTPUT_PATH) mbgl-offline
+
+glfw-app: $(LINUX_MAKEFILE)
+	$(MAKE) -j$(JOBS) -C $(LINUX_OUTPUT_PATH) glfw-app
+
+test: $(LINUX_MAKEFILE)
+	$(MAKE) -j$(JOBS) -C $(LINUX_OUTPUT_PATH) test
+
+run-glfw-app: glfw-app
+	cd $(LINUX_OUTPUT_PATH)/$(BUILDTYPE) && ./mapbox-glfw
+
+run-valgrind-glfw-app: glfw-app
+	cd $(LINUX_OUTPUT_PATH)/$(BUILDTYPE) && valgrind --leak-check=full --suppressions=../../../scripts/valgrind.sup ./mapbox-glfw
+
+ifneq (,$(shell which gdb))
+  GDB = gdb -batch -return-child-result -ex 'set print thread-events off' -ex 'run' -ex 'thread apply all bt' --args
 endif
 
-.PHONY: check
-check: ; $(RUN) BUILDTYPE=Debug ENABLE_COVERAGE=1 check
-coveralls: ; $(RUN) BUILDTYPE=Debug ENABLE_COVERAGE=1 coveralls
+test-%: test
+	$(GDB) $(LINUX_OUTPUT_PATH)/$(BUILDTYPE)/test --gtest_catch_exceptions=0 --gtest_filter=$*
 
-.PHONY: render
-render: ; $(RUN) Makefile/mbgl-render
+check: test
+	scripts/collect-coverage.sh $(LINUX_OUTPUT_PATH)/$(BUILDTYPE)
 
-.PHONY: offline
-offline: ; $(RUN) Makefile/mbgl-offline
+# Generates a compilation database with ninja for use in clang tooling
+compdb: platform/linux/platform.gyp $(LINUX_OUTPUT_PATH)/config.gypi
+	$(GYP) -f ninja -I $(LINUX_OUTPUT_PATH)/config.gypi \
+	  --generator-output=$(LINUX_OUTPUT_PATH) $<
+	deps/ninja/ninja-linux -C $(LINUX_OUTPUT_PATH)/$(BUILDTYPE) \
+		-t compdb cc cc_s cxx objc objcxx > $(LINUX_OUTPUT_PATH)/$(BUILDTYPE)/compile_commands.json
 
+tidy: compdb
+	deps/ninja/ninja-linux -C $(LINUX_OUTPUT_PATH)/$(BUILDTYPE) version shaders
+	scripts/clang-tidy.sh $(LINUX_OUTPUT_PATH)/$(BUILDTYPE)
 
-##### Maintenace operations ####################################################
+#### Miscellaneous targets #####################################################
 
-.PHONY: clear_xcode_cache
-clear_xcode_cache:
-ifeq ($(BUILD), osx)
-	@CUSTOM_DD=`defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null`; \
-	if [ $$CUSTOM_DD ]; then \
-		echo clearing files in $$CUSTOM_DD older than one day; \
-		find $$CUSTOM_DD/mapboxgl-app-* -mtime +1 | xargs rm -rf; \
-		find $$CUSTOM_DD/osxapp-* -mtime +1 | xargs rm -rf; \
-	fi; \
-	if [ -d ~/Library/Developer/Xcode/DerivedData/ ] && [ ! $$CUSTOM_DD ]; then \
-		echo 'clearing files in ~/Library/Developer/Xcode/DerivedData/{mapboxgl-app,osxapp}-* older than one day'; \
-		find ~/Library/Developer/Xcode/DerivedData/mapboxgl-app-* -mtime +1 | xargs rm -rf; \
-		find ~/Library/Developer/Xcode/DerivedData/osxapp-* -mtime +1 | xargs rm -rf; \
-	fi
-endif
-
-.PHONY: clear_sqlite_cache
-clear_sqlite_cache:
-ifeq ($(BUILD), osx)
-	rm -f ~/Library/Application\ Support/Mapbox\ GL/cache.db
-else
-	rm -f /tmp/mbgl-cache.db
-endif
-
-clean: clear_sqlite_cache clear_xcode_cache
+clean:
 	-find ./deps/gyp -name "*.pyc" -exec rm {} \;
-	-find ./build -type f -not -path '*/*.xcodeproj/*' -exec rm {} \;
-	-rm -rf ./gyp/build/
-	-rm -rf ./config/*.gypi
-	-rm -rf ./platform/android/MapboxGLAndroidSDK/build \
+	-rm -rf ./build \
+	        ./platform/android/MapboxGLAndroidSDK/build \
 	        ./platform/android/MapboxGLAndroidSDKTestApp/build \
 	        ./platform/android/MapboxGLAndroidSDK/src/main/jniLibs \
 	        ./platform/android/MapboxGLAndroidSDKTestApp/src/main/jniLibs \
-	        ./platform/android/MapboxGLAndroidSDK/src/main/obj.target \
 	        ./platform/android/MapboxGLAndroidSDK/src/main/assets
 
 distclean: clean
 	-rm -rf ./mason_packages
+	-rm -rf ./node_modules

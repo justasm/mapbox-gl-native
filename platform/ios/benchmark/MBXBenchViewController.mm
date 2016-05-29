@@ -1,22 +1,13 @@
 #import "MBXBenchViewController.h"
 
+#import "MBXBenchAppDelegate.h"
+
 #import <Mapbox/Mapbox.h>
+#import "MGLMapView_Internal.h"
 
 #include "locations.hpp"
 
 #include <chrono>
-
-@interface MGLMapView (MBXBenchmarkAdditions)
-
-#pragma mark - Debugging
-
-/** Triggers another render pass even when it is not necessary. */
-- (void)setNeedsGLDisplay;
-
-/** Returns whether the map view is currently loading or processing any assets required to render the map */
-- (BOOL)isFullyLoaded;
-
-@end
 
 @interface MBXBenchViewController () <MGLMapViewDelegate>
 
@@ -44,7 +35,9 @@
 {
     [super viewDidLoad];
 
-    NSURL* url = [[NSURL alloc] initWithString:@"mapbox://styles/mapbox/streets-v8"];
+    // Use a local style and local assets if they’ve been downloaded.
+    NSURL *tileSourceURL = [[NSBundle mainBundle] URLForResource:@"mapbox.mapbox-terrain-v2,mapbox.mapbox-streets-v6" withExtension:nil subdirectory:@"tiles"];
+    NSURL *url = [NSURL URLWithString:tileSourceURL ? @"asset://styles/streets-v8.json" : @"mapbox://styles/mapbox/streets-v8"];
     self.mapView = [[MGLMapView alloc] initWithFrame:self.view.bounds styleURL:url];
     self.mapView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.mapView.delegate = self;
@@ -53,10 +46,42 @@
     self.mapView.rotateEnabled = NO;
     self.mapView.userInteractionEnabled = YES;
 
-    [self startBenchmarkIteration];
-
     [self.view addSubview:self.mapView];
+}
 
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    
+    if ([MGLAccountManager accessToken].length) {
+        [self startBenchmarkIteration];
+    } else {
+        UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Access Token" message:@"Enter your Mapbox access token to load Mapbox-hosted tiles and styles:" preferredStyle:UIAlertControllerStyleAlert];
+        [alertController addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
+            textField.keyboardType = UIKeyboardTypeURL;
+            textField.autocorrectionType = UITextAutocorrectionTypeNo;
+            textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        }];
+        
+        [alertController addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+            [self startBenchmarkIteration];
+        }]];
+        UIAlertAction *OKAction = [UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            UITextField *textField = alertController.textFields.firstObject;
+            NSString *accessToken = textField.text;
+            [[NSUserDefaults standardUserDefaults] setObject:accessToken forKey:MBXMapboxAccessTokenDefaultsKey];
+            [MGLAccountManager setAccessToken:accessToken];
+            [self.mapView reloadStyle:self];
+            
+            [self startBenchmarkIteration];
+        }];
+        [alertController addAction:OKAction];
+        
+        if ([alertController respondsToSelector:@selector(setPreferredAction:)]) {
+            alertController.preferredAction = OKAction;
+        }
+        [self presentViewController:alertController animated:YES completion:nil];
+    }
 }
 
 size_t idx = 0;
@@ -81,13 +106,17 @@ static const int benchmarkDuration = 200; // frames
         // Do nothing. The benchmark is completed.
         NSLog(@"Benchmark completed.");
         NSLog(@"Result:");
+        double totalFPS = 0;
         size_t colWidth = 0;
         for (const auto& row : result) {
             colWidth = std::max(row.first.size(), colWidth);
         }
         for (const auto& row : result) {
             NSLog(@"| %-*s | %4.1f fps |", int(colWidth), row.first.c_str(), row.second);
+            totalFPS += row.second;
         }
+        NSLog(@"Total FPS: %4.1f", totalFPS);
+        NSLog(@"Average FPS: %4.1f", totalFPS / result.size());
         exit(0);
     }
 }
@@ -136,7 +165,7 @@ static const int benchmarkDuration = 200; // frames
         {
             // Start the benchmarking timer.
             state = State::WarmingUp;
-            [self.mapView emptyMemoryCache];
+            [self.mapView didReceiveMemoryWarning];
             NSLog(@"- Warming up for %d frames...", warmupDuration);
             [mapView setNeedsGLDisplay];
         }

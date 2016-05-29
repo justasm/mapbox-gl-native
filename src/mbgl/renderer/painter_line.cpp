@@ -1,8 +1,6 @@
 #include <mbgl/renderer/painter.hpp>
 #include <mbgl/renderer/line_bucket.hpp>
 #include <mbgl/layer/line_layer.hpp>
-#include <mbgl/map/tile_id.hpp>
-#include <mbgl/map/map_data.hpp>
 #include <mbgl/shader/line_shader.hpp>
 #include <mbgl/shader/linesdf_shader.hpp>
 #include <mbgl/shader/linepattern_shader.hpp>
@@ -12,7 +10,10 @@
 
 using namespace mbgl;
 
-void Painter::renderLine(LineBucket& bucket, const LineLayer& layer, const TileID& id, const mat4& matrix) {
+void Painter::renderLine(LineBucket& bucket,
+                         const LineLayer& layer,
+                         const UnwrappedTileID& tileID,
+                         const mat4& matrix) {
     // Abort early.
     if (pass == RenderPass::Opaque) return;
 
@@ -27,31 +28,20 @@ void Painter::renderLine(LineBucket& bucket, const LineLayer& layer, const TileI
 
     // the distance over which the line edge fades out.
     // Retina devices need a smaller distance to avoid aliasing.
-    float antialiasing = 1.0 / data.pixelRatio;
+    float antialiasing = 1.0 / frame.pixelRatio;
 
-    float blur = properties.blur + antialiasing;
-    float edgeWidth = properties.width / 2.0;
-    float inset = -1;
-    float offset = 0;
-    float shift = 0;
+    bool wireframe = frame.debugOptions & MapDebugOptions::Wireframe;
 
-    if (properties.gapWidth != 0) {
-        inset = properties.gapWidth / 2.0 + antialiasing * 0.5;
-        edgeWidth = properties.width;
+    float blur = properties.lineBlur + antialiasing;
 
-        // shift outer lines half a pixel towards the middle to eliminate the crack
-        offset = inset - antialiasing / 2.0;
+    Color color = {{ 1.0f, 1.0f, 1.0f, 1.0f }};
+    float opacity = 1.0f;
+    if (!wireframe) {
+        color = properties.lineColor;
+        opacity = properties.lineOpacity;
     }
 
-    float outset = offset + edgeWidth + antialiasing / 2.0 + shift;
-
-    Color color = properties.color;
-    color[0] *= properties.opacity;
-    color[1] *= properties.opacity;
-    color[2] *= properties.opacity;
-    color[3] *= properties.opacity;
-
-    const float ratio = state.getScale() / (1ll << id.sourceZ) * util::tileSize / util::EXTENT;
+    const float ratio = 1.0 / tileID.pixelsToTileUnits(1.0, state.getZoom());
 
     mat2 antialiasingMatrix;
     matrix::identity(antialiasingMatrix);
@@ -64,79 +54,89 @@ void Painter::renderLine(LineBucket& bucket, const LineLayer& layer, const TileI
     float x = state.getHeight() / 2.0f * std::tan(state.getPitch());
     float extra = (topedgelength + x) / topedgelength - 1;
 
-    mat4 vtxMatrix = translatedMatrix(matrix, properties.translate, id, properties.translateAnchor);
+    mat4 vtxMatrix =
+        translatedMatrix(matrix, properties.lineTranslate, tileID, properties.lineTranslateAnchor);
 
     setDepthSublayer(0);
 
-    if (!properties.dasharray.value.from.empty()) {
+    if (!properties.lineDasharray.value.from.empty()) {
 
         config.program = linesdfShader->getID();
 
         linesdfShader->u_matrix = vtxMatrix;
-        linesdfShader->u_exmatrix = extrudeMatrix;
-        linesdfShader->u_linewidth = {{ outset, inset }};
+        linesdfShader->u_linewidth = properties.lineWidth / 2;
+        linesdfShader->u_gapwidth = properties.lineGapWidth / 2;
+        linesdfShader->u_antialiasing = antialiasing / 2;
         linesdfShader->u_ratio = ratio;
         linesdfShader->u_blur = blur;
         linesdfShader->u_color = color;
+        linesdfShader->u_opacity = opacity;
 
-        LinePatternPos posA = lineAtlas->getDashPosition(properties.dasharray.value.from, layout.cap == CapType::Round, glObjectStore);
-        LinePatternPos posB = lineAtlas->getDashPosition(properties.dasharray.value.to, layout.cap == CapType::Round, glObjectStore);
-        lineAtlas->bind(glObjectStore);
+        LinePatternPos posA = lineAtlas->getDashPosition(properties.lineDasharray.value.from, layout.lineCap == LineCapType::Round, glObjectStore);
+        LinePatternPos posB = lineAtlas->getDashPosition(properties.lineDasharray.value.to, layout.lineCap == LineCapType::Round, glObjectStore);
 
-        const float widthA = posA.width * properties.dasharray.value.fromScale;
-        const float widthB = posB.width * properties.dasharray.value.toScale;
+        const float widthA = posA.width * properties.lineDasharray.value.fromScale * layer.dashLineWidth;
+        const float widthB = posB.width * properties.lineDasharray.value.toScale * layer.dashLineWidth;
 
-        const float patternratio =
-            std::pow(2.0, state.getIntegerZoom() - id.sourceZ) * util::tileSize / util::EXTENT;
-
-        float scaleXA = patternratio / widthA / properties.dashLineWidth;
+        float scaleXA = 1.0 / tileID.pixelsToTileUnits(widthA, state.getIntegerZoom());
         float scaleYA = -posA.height / 2.0;
-        float scaleXB = patternratio / widthB / properties.dashLineWidth;
+        float scaleXB = 1.0 / tileID.pixelsToTileUnits(widthB, state.getIntegerZoom());
         float scaleYB = -posB.height / 2.0;
 
         linesdfShader->u_patternscale_a = {{ scaleXA, scaleYA }};
         linesdfShader->u_tex_y_a = posA.y;
         linesdfShader->u_patternscale_b = {{ scaleXB, scaleYB }};
         linesdfShader->u_tex_y_b = posB.y;
-        linesdfShader->u_image = 0;
-        linesdfShader->u_sdfgamma = lineAtlas->width / (properties.dashLineWidth * std::min(widthA, widthB) * 256.0 * data.pixelRatio) / 2;
-        linesdfShader->u_mix = properties.dasharray.value.t;
+        linesdfShader->u_sdfgamma = lineAtlas->width / (std::min(widthA, widthB) * 256.0 * frame.pixelRatio) / 2;
+        linesdfShader->u_mix = properties.lineDasharray.value.t;
         linesdfShader->u_extra = extra;
-        linesdfShader->u_offset = -properties.offset;
+        linesdfShader->u_offset = -properties.lineOffset;
         linesdfShader->u_antialiasingmatrix = antialiasingMatrix;
+
+        linesdfShader->u_image = 0;
+        config.activeTexture = GL_TEXTURE0;
+        lineAtlas->bind(glObjectStore);
 
         bucket.drawLineSDF(*linesdfShader, glObjectStore);
 
-    } else if (!properties.pattern.value.from.empty()) {
-        optional<SpriteAtlasPosition> imagePosA = spriteAtlas->getPosition(properties.pattern.value.from, true);
-        optional<SpriteAtlasPosition> imagePosB = spriteAtlas->getPosition(properties.pattern.value.to, true);
+    } else if (!properties.linePattern.value.from.empty()) {
+        optional<SpriteAtlasPosition> imagePosA = spriteAtlas->getPosition(properties.linePattern.value.from, true);
+        optional<SpriteAtlasPosition> imagePosB = spriteAtlas->getPosition(properties.linePattern.value.to, true);
         
         if (!imagePosA || !imagePosB)
             return;
 
-        const float factor = util::EXTENT / util::tileSize / std::pow(2.0f, state.getIntegerZoom() - id.sourceZ);
-
         config.program = linepatternShader->getID();
 
         linepatternShader->u_matrix = vtxMatrix;
-        linepatternShader->u_exmatrix = extrudeMatrix;
-        linepatternShader->u_linewidth = {{ outset, inset }};
+        linepatternShader->u_linewidth = properties.lineWidth / 2;
+        linepatternShader->u_gapwidth = properties.lineGapWidth / 2;
+        linepatternShader->u_antialiasing = antialiasing / 2;
         linepatternShader->u_ratio = ratio;
         linepatternShader->u_blur = blur;
 
-        linepatternShader->u_pattern_size_a = {{(*imagePosA).size[0] * factor * properties.pattern.value.fromScale, (*imagePosA).size[1]}};
+        linepatternShader->u_pattern_size_a = {{
+            tileID.pixelsToTileUnits((*imagePosA).size[0] * properties.linePattern.value.fromScale, state.getIntegerZoom()),
+            (*imagePosA).size[1]
+        }};
         linepatternShader->u_pattern_tl_a = (*imagePosA).tl;
         linepatternShader->u_pattern_br_a = (*imagePosA).br;
-        linepatternShader->u_pattern_size_b = {{(*imagePosB).size[0] * factor * properties.pattern.value.toScale, (*imagePosB).size[1]}};
+
+        linepatternShader->u_pattern_size_b = {{
+            tileID.pixelsToTileUnits((*imagePosB).size[0] * properties.linePattern.value.toScale, state.getIntegerZoom()),
+            (*imagePosB).size[1]
+        }};
         linepatternShader->u_pattern_tl_b = (*imagePosB).tl;
         linepatternShader->u_pattern_br_b = (*imagePosB).br;
-        linepatternShader->u_fade = properties.pattern.value.t;
-        linepatternShader->u_opacity = properties.opacity;
+
+        linepatternShader->u_fade = properties.linePattern.value.t;
+        linepatternShader->u_opacity = properties.lineOpacity;
         linepatternShader->u_extra = extra;
-        linepatternShader->u_offset = -properties.offset;
+        linepatternShader->u_offset = -properties.lineOffset;
         linepatternShader->u_antialiasingmatrix = antialiasingMatrix;
 
-        MBGL_CHECK_ERROR(glActiveTexture(GL_TEXTURE0));
+        linepatternShader->u_image = 0;
+        config.activeTexture = GL_TEXTURE0;
         spriteAtlas->bind(true, glObjectStore);
 
         bucket.drawLinePatterns(*linepatternShader, glObjectStore);
@@ -145,15 +145,17 @@ void Painter::renderLine(LineBucket& bucket, const LineLayer& layer, const TileI
         config.program = lineShader->getID();
 
         lineShader->u_matrix = vtxMatrix;
-        lineShader->u_exmatrix = extrudeMatrix;
-        lineShader->u_linewidth = {{ outset, inset }};
+        lineShader->u_linewidth = properties.lineWidth / 2;
+        lineShader->u_gapwidth = properties.lineGapWidth / 2;
+        lineShader->u_antialiasing = antialiasing / 2;
         lineShader->u_ratio = ratio;
         lineShader->u_blur = blur;
         lineShader->u_extra = extra;
-        lineShader->u_offset = -properties.offset;
+        lineShader->u_offset = -properties.lineOffset;
         lineShader->u_antialiasingmatrix = antialiasingMatrix;
 
         lineShader->u_color = color;
+        lineShader->u_opacity = opacity;
 
         bucket.drawLines(*lineShader, glObjectStore);
     }

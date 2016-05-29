@@ -6,11 +6,11 @@ set -u
 
 NAME=Mapbox
 OUTPUT=build/ios/pkg
-LIBUV_VERSION=1.7.5
+DERIVED_DATA=build/ios
+PRODUCTS=${DERIVED_DATA}/Build/Products
 
 BUILDTYPE=${BUILDTYPE:-Release}
 BUILD_FOR_DEVICE=${BUILD_DEVICE:-true}
-ENABLE_BITCODE=${BITCODE:-YES}
 GCC_GENERATE_DEBUGGING_SYMBOLS=${SYMBOLS:-YES}
 
 BUILD_DYNAMIC=true
@@ -21,10 +21,19 @@ elif [[ ${FORMAT} == "dynamic" ]]; then
     BUILD_STATIC=false
 fi
 
-BUNDLE_RESOURCES=${BUNDLE_RESOURCES:-}
-BUNDLE_PATH=
-if [[ ${BUNDLE_RESOURCES} ]]; then
-    BUNDLE_PATH="/${NAME}.bundle"
+SELF_CONTAINED=${SELF_CONTAINED:-}
+STATIC_BUNDLE_DIR=
+if [[ ${SELF_CONTAINED} ]]; then
+    STATIC_BUNDLE_DIR="${OUTPUT}/static/${NAME}.framework"
+else
+    STATIC_BUNDLE_DIR="${OUTPUT}/static"
+fi
+
+STATIC_SETTINGS_DIR=
+if [[ ${SELF_CONTAINED} ]]; then
+    STATIC_SETTINGS_DIR="${OUTPUT}/static/${NAME}.framework"
+else
+    STATIC_SETTINGS_DIR="${OUTPUT}"
 fi
 
 SDK=iphonesimulator
@@ -33,7 +42,7 @@ if [[ ${BUILD_FOR_DEVICE} == true ]]; then
 fi
 IOS_SDK_VERSION=`xcrun --sdk ${SDK} --show-sdk-version`
 
-echo "Configuring ${FORMAT:-dynamic and static} ${BUILDTYPE} framework for ${SDK}; symbols: ${GCC_GENERATE_DEBUGGING_SYMBOLS}; Bitcode: ${ENABLE_BITCODE}; Mapbox.bundle: ${BUNDLE_RESOURCES}"
+echo "Configuring ${FORMAT:-dynamic and static} ${BUILDTYPE} framework for ${SDK}; symbols: ${GCC_GENERATE_DEBUGGING_SYMBOLS}; self-contained static framework: ${SELF_CONTAINED:-NO}"
 
 function step { >&2 echo -e "\033[1m\033[36m* $@\033[0m"; }
 function finish { >&2 echo -en "\033[0m"; }
@@ -48,7 +57,6 @@ if [[ ${BUILD_DYNAMIC} == true ]]; then
     mkdir -p "${OUTPUT}"/dynamic
 fi
 
-
 step "Recording library version…"
 VERSION="${OUTPUT}"/version.txt
 echo -n "https://github.com/mapbox/mapbox-gl-native/commit/" > ${VERSION}
@@ -57,77 +65,48 @@ echo -n "mapbox-gl-native "
 echo ${HASH}
 echo ${HASH} >> ${VERSION}
 
-
-step "Creating build files…"
-export MASON_PLATFORM=ios
-export BUILDTYPE=${BUILDTYPE:-Release}
-export HOST=ios
-make Xcode/ios
-
 PROJ_VERSION=$(git rev-list --count HEAD)
+SEM_VERSION=$( git describe --tags --match=ios-v*.*.* --abbrev=0 | sed 's/^ios-v//' )
+SHORT_VERSION=${SEM_VERSION%-*}
 
-if [[ "${BUILD_FOR_DEVICE}" == true ]]; then
-    if [[ ${BUILD_STATIC} == true ]]; then
-        step "Building intermediate static libraries for iOS devices (build ${PROJ_VERSION})…"
-        xcodebuild -sdk iphoneos${IOS_SDK_VERSION} \
-            ARCHS="arm64 armv7 armv7s" \
-            ONLY_ACTIVE_ARCH=NO \
-            GCC_GENERATE_DEBUGGING_SYMBOLS=${GCC_GENERATE_DEBUGGING_SYMBOLS} \
-            ENABLE_BITCODE=${ENABLE_BITCODE} \
-            DEPLOYMENT_POSTPROCESSING=YES \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY= \
-            -project ./build/ios-all/gyp/mbgl.xcodeproj \
-            -configuration ${BUILDTYPE} \
-            -target everything \
-            -jobs ${JOBS}
-    fi
+step "Building targets (build ${PROJ_VERSION}, version ${SEM_VERSION})…"
 
-    if [[ ${BUILD_DYNAMIC} == true ]]; then
-        step "Building dynamic framework for iOS devices (build ${PROJ_VERSION})…"
-        xcodebuild -sdk iphoneos${IOS_SDK_VERSION} \
-            ARCHS="arm64 armv7 armv7s" \
-            ONLY_ACTIVE_ARCH=NO \
-            GCC_GENERATE_DEBUGGING_SYMBOLS=${GCC_GENERATE_DEBUGGING_SYMBOLS} \
-            ENABLE_BITCODE=${ENABLE_BITCODE} \
-            DEPLOYMENT_POSTPROCESSING=YES \
-            CURRENT_PROJECT_VERSION=${PROJ_VERSION} \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY= \
-            -project ./build/ios-all/gyp/ios.xcodeproj \
-            -configuration ${BUILDTYPE} \
-            -target iossdk \
-            -jobs ${JOBS}
-    fi
+SCHEME='dynamic'
+if [[ ${BUILD_DYNAMIC} == true && ${BUILD_STATIC} == true ]]; then
+    SCHEME+='+static'
+elif [[ ${BUILD_STATIC} == true ]]; then
+    SCHEME='static'
 fi
 
-if [[ ${BUILD_STATIC} == true ]]; then
-    step "Building intermediate static libraries for iOS Simulator (build ${PROJ_VERSION})…"
-    xcodebuild -sdk iphonesimulator${IOS_SDK_VERSION} \
-        ARCHS="x86_64 i386" \
-        ONLY_ACTIVE_ARCH=NO \
-        GCC_GENERATE_DEBUGGING_SYMBOLS=${GCC_GENERATE_DEBUGGING_SYMBOLS} \
-        -project ./build/ios-all/gyp/mbgl.xcodeproj \
-        -configuration ${BUILDTYPE} \
-        -target everything \
-        -jobs ${JOBS}
-fi
+xcodebuild \
+    GCC_GENERATE_DEBUGGING_SYMBOLS=${GCC_GENERATE_DEBUGGING_SYMBOLS} \
+    CURRENT_PROJECT_VERSION=${PROJ_VERSION} \
+    CURRENT_SHORT_VERSION=${SHORT_VERSION} \
+    CURRENT_SEMANTIC_VERSION=${SEM_VERSION} \
+    CURRENT_COMMIT_HASH=${HASH} \
+    -derivedDataPath ${DERIVED_DATA} \
+    -workspace ./platform/ios/ios.xcworkspace \
+    -scheme ${SCHEME} \
+    -configuration ${BUILDTYPE} \
+    -sdk iphonesimulator \
+    -jobs ${JOBS} | xcpretty
 
-if [[ ${BUILD_DYNAMIC} == true ]]; then
-    step "Building dynamic framework for iOS Simulator (build ${PROJ_VERSION})…"
-    xcodebuild -sdk iphonesimulator${IOS_SDK_VERSION} \
-        ARCHS="x86_64 i386" \
-        ONLY_ACTIVE_ARCH=NO \
+if [[ ${BUILD_FOR_DEVICE} == true ]]; then
+    xcodebuild \
         GCC_GENERATE_DEBUGGING_SYMBOLS=${GCC_GENERATE_DEBUGGING_SYMBOLS} \
-        ENABLE_BITCODE=${ENABLE_BITCODE} \
         CURRENT_PROJECT_VERSION=${PROJ_VERSION} \
-        -project ./build/ios-all/gyp/ios.xcodeproj \
+        CURRENT_SHORT_VERSION=${SHORT_VERSION} \
+        CURRENT_SEMANTIC_VERSION=${SEM_VERSION} \
+        CURRENT_COMMIT_HASH=${HASH} \
+        -derivedDataPath ${DERIVED_DATA} \
+        -workspace ./platform/ios/ios.xcworkspace \
+        -scheme ${SCHEME} \
         -configuration ${BUILDTYPE} \
-        -target iossdk \
-        -jobs ${JOBS}
+        -sdk iphoneos \
+        -jobs ${JOBS} | xcpretty
 fi
 
-LIBS=(core.a platform-ios.a asset-fs.a http-nsurl.a)
+LIBS=(core.a platform-ios.a)
 
 # https://medium.com/@syshen/create-an-ios-universal-framework-148eb130a46c
 if [[ "${BUILD_FOR_DEVICE}" == true ]]; then
@@ -135,42 +114,56 @@ if [[ "${BUILD_FOR_DEVICE}" == true ]]; then
         step "Assembling static framework for iOS Simulator and devices…"
         mkdir -p ${OUTPUT}/static/${NAME}.framework
         libtool -static -no_warning_for_no_symbols \
-            `find mason_packages/ios-${IOS_SDK_VERSION} -type f -name libuv.a` \
             `find mason_packages/ios-${IOS_SDK_VERSION} -type f -name libgeojsonvt.a` \
             -o ${OUTPUT}/static/${NAME}.framework/${NAME} \
-            ${LIBS[@]/#/gyp/build/${BUILDTYPE}-iphoneos/libmbgl-} \
-            ${LIBS[@]/#/gyp/build/${BUILDTYPE}-iphonesimulator/libmbgl-}
+            ${LIBS[@]/#/${PRODUCTS}/${BUILDTYPE}-iphoneos/libmbgl-} \
+            ${LIBS[@]/#/${PRODUCTS}/${BUILDTYPE}-iphonesimulator/libmbgl-}
+        
+        cp -rv ${PRODUCTS}/${BUILDTYPE}-iphoneos/${NAME}.bundle ${STATIC_BUNDLE_DIR}
     fi
 
     if [[ ${BUILD_DYNAMIC} == true ]]; then
         step "Copying dynamic framework into place for iOS devices"
         cp -r \
-            gyp/build/${BUILDTYPE}-iphoneos/${NAME}.framework \
+            ${PRODUCTS}/${BUILDTYPE}-iphoneos/${NAME}.framework \
             ${OUTPUT}/dynamic/
+        if [[ -e ${PRODUCTS}/${BUILDTYPE}-iphoneos/${NAME}.framework.dSYM ]]; then
+            cp -r ${PRODUCTS}/${BUILDTYPE}-iphoneos/${NAME}.framework.dSYM \
+                ${OUTPUT}/dynamic/
+        fi
 
         step "Merging simulator dynamic library into device dynamic library…"
         lipo \
-            gyp/build/${BUILDTYPE}-iphoneos/${NAME}.framework/${NAME} \
-            gyp/build/${BUILDTYPE}-iphonesimulator/${NAME}.framework/${NAME} \
+            ${PRODUCTS}/${BUILDTYPE}-iphoneos/${NAME}.framework/${NAME} \
+            ${PRODUCTS}/${BUILDTYPE}-iphonesimulator/${NAME}.framework/${NAME} \
             -create -output ${OUTPUT}/dynamic/${NAME}.framework/${NAME} | echo
     fi
+    
+    cp -rv ${PRODUCTS}/${BUILDTYPE}-iphoneos/Settings.bundle ${STATIC_SETTINGS_DIR}
 else
     if [[ ${BUILD_STATIC} == true ]]; then
         step "Assembling static library for iOS Simulator…"
         mkdir -p ${OUTPUT}/static/${NAME}.framework
         libtool -static -no_warning_for_no_symbols \
-            `find mason_packages/ios-${IOS_SDK_VERSION} -type f -name libuv.a` \
             `find mason_packages/ios-${IOS_SDK_VERSION} -type f -name libgeojsonvt.a` \
             -o ${OUTPUT}/static/${NAME}.framework/${NAME} \
-            ${LIBS[@]/#/gyp/build/${BUILDTYPE}-iphonesimulator/libmbgl-}
+            ${LIBS[@]/#/${PRODUCTS}/${BUILDTYPE}-iphonesimulator/libmbgl-}
+        
+        cp -rv ${PRODUCTS}/${BUILDTYPE}-iphonesimulator/${NAME}.bundle ${STATIC_BUNDLE_DIR}
     fi
 
     if [[ ${BUILD_DYNAMIC} == true ]]; then
         step "Copying dynamic framework into place for iOS Simulator…"
         cp -r \
-            gyp/build/${BUILDTYPE}-iphonesimulator/${NAME}.framework \
+            ${PRODUCTS}/${BUILDTYPE}-iphonesimulator/${NAME}.framework \
             ${OUTPUT}/dynamic/${NAME}.framework
+        if [[ -e ${PRODUCTS}/${BUILDTYPE}-iphonesimulator/${NAME}.framework.dSYM ]]; then
+            cp -r ${PRODUCTS}/${BUILDTYPE}-iphonesimulator/${NAME}.framework.dSYM \
+                ${OUTPUT}/dynamic/
+        fi
     fi
+    
+    cp -rv ${PRODUCTS}/${BUILDTYPE}-iphonesimulator/Settings.bundle ${STATIC_SETTINGS_DIR}
 fi
 
 if [[ "${GCC_GENERATE_DEBUGGING_SYMBOLS}" == false ]]; then
@@ -192,48 +185,20 @@ fi
 
 if [[ ${BUILD_STATIC} == true ]]; then
     step "Copying static library headers…"
-    mkdir -p "${OUTPUT}/static/${NAME}.framework/Headers"
-    cp -pv platform/{darwin,ios}/include/*.h "${OUTPUT}/static/${NAME}.framework/Headers"
+    cp -rv "${PRODUCTS}/${BUILDTYPE}-iphoneos/Headers" "${OUTPUT}/static/${NAME}.framework/Headers"
     cat platform/ios/framework/Mapbox-static.h > "${OUTPUT}/static/${NAME}.framework/Headers/Mapbox.h"
-    cat platform/ios/framework/Mapbox.h >> "${OUTPUT}/static/${NAME}.framework/Headers/Mapbox.h"
+    cat "${PRODUCTS}/${BUILDTYPE}-iphoneos/Headers/Mapbox.h" >> "${OUTPUT}/static/${NAME}.framework/Headers/Mapbox.h"
 fi
 
 step "Copying library resources…"
-SEM_VERSION=$( git describe --tags --match=ios-v*.*.* --abbrev=0 | sed 's/^ios-v//' )
-SHORT_VERSION=${SEM_VERSION%-*}
-if [[ ${BUNDLE_RESOURCES} ]]; then
-    cp -pv LICENSE.md "${OUTPUT}/static/${NAME}.framework"
-    cp -rv platform/ios/app/Settings.bundle "${OUTPUT}/static/${NAME}.framework"
-else
-    cp -pv LICENSE.md "${OUTPUT}"
-    cp -rv platform/ios/app/Settings.bundle "${OUTPUT}"
-fi
+cp -pv LICENSE.md ${STATIC_SETTINGS_DIR}
 if [[ ${BUILD_STATIC} == true ]]; then
-    mkdir -p "${OUTPUT}/static/${NAME}.framework${BUNDLE_PATH}"
-    cp -pv platform/ios/resources/* "${OUTPUT}/static/${NAME}.framework${BUNDLE_PATH}"
-    INFO_PLIST_PATH="${OUTPUT}/static/${NAME}.framework/Info.plist"
-    cp -pv platform/ios/framework/Info.plist "${INFO_PLIST_PATH}"
-    plutil -replace CFBundleExecutable -string ${NAME} "${INFO_PLIST_PATH}"
-    plutil -replace CFBundleIdentifier -string com.mapbox.sdk.ios "${INFO_PLIST_PATH}"
-    plutil -replace CFBundleName -string ${NAME} "${INFO_PLIST_PATH}"
-    plutil -replace CFBundleShortVersionString -string "${SHORT_VERSION}" "${INFO_PLIST_PATH}"
-    plutil -replace CFBundleVersion -string ${PROJ_VERSION} "${INFO_PLIST_PATH}"
-    plutil -replace MGLSemanticVersionString -string "${SEM_VERSION}" "${INFO_PLIST_PATH}"
-    plutil -replace MGLCommitHash -string "${HASH}" "${INFO_PLIST_PATH}"
-    if [[ ${BUNDLE_RESOURCES} ]]; then
-        cp -pv "${INFO_PLIST_PATH}" "${OUTPUT}/static/${NAME}.framework${BUNDLE_PATH}/Info.plist"
-    fi
+    cp -pv "${STATIC_BUNDLE_DIR}/${NAME}.bundle/Info.plist" "${OUTPUT}/static/${NAME}.framework/Info.plist"
+    plutil -replace CFBundlePackageType -string FMWK "${OUTPUT}/static/${NAME}.framework/Info.plist"
     mkdir "${OUTPUT}/static/${NAME}.framework/Modules"
     cp -pv platform/ios/framework/modulemap "${OUTPUT}/static/${NAME}.framework/Modules/module.modulemap"
 fi
-if [[ ${BUILD_DYNAMIC} == true ]]; then
-    plutil -replace CFBundleShortVersionString -string "${SHORT_VERSION}" "${OUTPUT}/dynamic/${NAME}.framework/Info.plist"
-    plutil -replace CFBundleVersion -string "${PROJ_VERSION}" "${OUTPUT}/dynamic/${NAME}.framework/Info.plist"
-    plutil -replace MGLSemanticVersionString -string "${SEM_VERSION}" "${OUTPUT}/dynamic/${NAME}.framework/Info.plist"
-    plutil -replace MGLCommitHash -string "${HASH}" "${OUTPUT}/dynamic/${NAME}.framework/Info.plist"
-    cp -pv platform/ios/framework/strip-frameworks.sh "${OUTPUT}/dynamic/${NAME}.framework/strip-frameworks.sh"
-fi
-sed -n -e '/^## iOS/,$p' CHANGELOG.md > "${OUTPUT}/CHANGELOG.md"
+sed -n -e '/^## /,$p' platform/ios/CHANGELOG.md > "${OUTPUT}/CHANGELOG.md"
 
 rm -rf /tmp/mbgl
 mkdir -p /tmp/mbgl/

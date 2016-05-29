@@ -1,5 +1,4 @@
-#ifndef MBGL_CIRCLE_LAYER
-#define MBGL_CIRCLE_LAYER
+#pragma once
 
 #include <mbgl/style/style_layer.hpp>
 #include <mbgl/style/paint_property.hpp>
@@ -8,16 +7,12 @@ namespace mbgl {
 
 class CirclePaintProperties {
 public:
-    PaintProperty<float> radius { 5.0f };
-    PaintProperty<Color> color { {{ 0, 0, 0, 1 }} };
-    PaintProperty<float> opacity { 1.0f };
-    PaintProperty<std::array<float, 2>> translate { {{ 0, 0 }} };
-    PaintProperty<TranslateAnchorType> translateAnchor { TranslateAnchorType::Map };
-    PaintProperty<float> blur { 0 };
-
-    bool isVisible() const {
-        return radius > 0 && color.value[3] > 0 && opacity > 0;
-    }
+    PaintProperty<float> circleRadius { 5.0f };
+    PaintProperty<Color> circleColor { {{ 0, 0, 0, 1 }} };
+    PaintProperty<float> circleOpacity { 1.0f };
+    PaintProperty<std::array<float, 2>> circleTranslate { {{ 0, 0 }} };
+    PaintProperty<TranslateAnchorType> circleTranslateAnchor { TranslateAnchorType::Map };
+    PaintProperty<float> circleBlur { 0 };
 };
 
 class CircleLayer : public StyleLayer {
@@ -33,6 +28,13 @@ public:
 
     std::unique_ptr<Bucket> createBucket(StyleBucketParameters&) const override;
 
+    float getQueryRadius() const override;
+    bool queryIntersectsGeometry(
+            const GeometryCollection& queryGeometry,
+            const GeometryCollection& geometry,
+            const float bearing,
+            const float pixelsToTileUnits) const override;
+
     CirclePaintProperties paint;
 };
 
@@ -42,5 +44,3 @@ inline bool StyleLayer::is<CircleLayer>() const {
 }
 
 } // namespace mbgl
-
-#endif

@@ -4,6 +4,8 @@
 #import "MGLUserLocation_Private.h"
 #import "MGLAnnotation.h"
 #import "MGLMapView.h"
+#import "MGLCoordinateFormatter.h"
+#import "NSBundle+MGLAdditions.h"
 
 const CGFloat MGLUserLocationAnnotationDotSize = 22.0;
 const CGFloat MGLUserLocationAnnotationHaloSize = 115.0;
@@ -36,6 +38,8 @@ const CGFloat MGLUserLocationAnnotationArrowSize = MGLUserLocationAnnotationPuck
     CLLocationAccuracy _oldHorizontalAccuracy;
     double _oldZoom;
     double _oldPitch;
+    
+    MGLCoordinateFormatter *_accessibilityCoordinateFormatter;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame
@@ -53,7 +57,10 @@ const CGFloat MGLUserLocationAnnotationArrowSize = MGLUserLocationAnnotationPuck
         self.annotation = [[MGLUserLocation alloc] initWithMapView:mapView];
         _mapView = mapView;
         [self setupLayers];
-        self.accessibilityLabel = @"User location";
+        self.accessibilityTraits = UIAccessibilityTraitButton | UIAccessibilityTraitAdjustable | UIAccessibilityTraitUpdatesFrequently;
+        
+        _accessibilityCoordinateFormatter = [[MGLCoordinateFormatter alloc] init];
+        _accessibilityCoordinateFormatter.unitStyle = NSFormattingUnitStyleLong;
     }
     return self;
 }
@@ -62,6 +69,62 @@ const CGFloat MGLUserLocationAnnotationArrowSize = MGLUserLocationAnnotationPuck
 {
     MGLMapView *mapView = [decoder valueForKey:@"mapView"];
     return [self initInMapView:mapView];
+}
+
+- (BOOL)isAccessibilityElement
+{
+    return !self.hidden;
+}
+
+- (NSString *)accessibilityLabel
+{
+    return self.annotation.title;
+}
+
+- (NSString *)accessibilityValue
+{
+    if (self.annotation.subtitle)
+    {
+        return self.annotation.subtitle;
+    }
+    
+    // Each arcminute of longitude is at most about 1 nmi, too small for low zoom levels.
+    // Each arcsecond of longitude is at most about 30 m, too small for all but the very highest of zoom levels.
+    double zoomLevel = self.mapView.zoomLevel;
+    _accessibilityCoordinateFormatter.allowsMinutes = zoomLevel > 8;
+    _accessibilityCoordinateFormatter.allowsSeconds = zoomLevel > 20;
+    
+    return [_accessibilityCoordinateFormatter stringFromCoordinate:self.mapView.centerCoordinate];
+}
+
+- (CGRect)accessibilityFrame
+{
+    return CGRectInset(self.frame, -15, -15);
+}
+
+- (UIBezierPath *)accessibilityPath
+{
+    return [UIBezierPath bezierPathWithOvalInRect:self.frame];
+}
+
+- (void)accessibilityIncrement
+{
+    [self.mapView accessibilityIncrement];
+}
+
+- (void)accessibilityDecrement
+{
+    [self.mapView accessibilityDecrement];
+}
+
+- (void)setHidden:(BOOL)hidden
+{
+    BOOL oldValue = super.hidden;
+    [super setHidden:hidden];
+    if (oldValue != hidden)
+    {
+        UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification, nil);
+    }
 }
 
 - (void)setTintColor:(UIColor *)tintColor
@@ -128,6 +191,22 @@ const CGFloat MGLUserLocationAnnotationArrowSize = MGLUserLocationAnnotationPuck
     }
 }
 
+- (void)updateFrameWithSize:(CGFloat)size
+{
+    CGSize newSize = CGSizeMake(size, size);
+    if (CGSizeEqualToSize(self.frame.size, newSize))
+    {
+        return;
+    }
+
+    // Update frame size, keeping the existing center point.
+    CGPoint oldCenter = self.center;
+    CGRect newFrame = self.frame;
+    newFrame.size = newSize;
+    [self setFrame:newFrame];
+    [self setCenter:oldCenter];
+}
+
 - (void)drawPuck
 {
     if ( ! _puckModeActivated)
@@ -140,6 +219,8 @@ const CGFloat MGLUserLocationAnnotationArrowSize = MGLUserLocationAnnotationPuck
         _haloLayer = nil;
         _dotBorderLayer = nil;
         _dotLayer = nil;
+
+        [self updateFrameWithSize:MGLUserLocationAnnotationPuckSize];
     }
 
     // background dot (white with black shadow)
@@ -215,6 +296,8 @@ const CGFloat MGLUserLocationAnnotationArrowSize = MGLUserLocationAnnotationPuck
 
         _puckDot = nil;
         _puckArrow = nil;
+
+        [self updateFrameWithSize:MGLUserLocationAnnotationDotSize];
     }
     
     BOOL showHeadingIndicator = _mapView.userTrackingMode == MGLUserTrackingModeFollowWithHeading;
@@ -471,7 +554,7 @@ const CGFloat MGLUserLocationAnnotationArrowSize = MGLUserLocationAnnotationPuck
     CGContextDrawRadialGradient(context, gradient,
                                 centerPoint, 0.0,
                                 centerPoint, haloRadius,
-                                nil);
+                                kNilOptions);
 
     image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();

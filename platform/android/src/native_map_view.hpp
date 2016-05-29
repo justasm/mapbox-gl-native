@@ -1,5 +1,4 @@
-#ifndef MBGL_ANDROID_NATIVE_MAP_VIEW
-#define MBGL_ANDROID_NATIVE_MAP_VIEW
+#pragma once
 
 #include <mbgl/map/map.hpp>
 #include <mbgl/map/view.hpp>
@@ -24,10 +23,7 @@ public:
     std::array<uint16_t, 2> getFramebufferSize() const override;
     void activate() override;
     void deactivate() override;
-    void notify() override;
     void invalidate() override;
-    void beforeRender() override;
-    void afterRender() override;
 
     void notifyMapChange(mbgl::MapChange) override;
 
@@ -43,8 +39,7 @@ public:
     void createSurface(ANativeWindow *window);
     void destroySurface();
 
-    void resume();
-    void pause();
+    void render();
 
     void enableFps(bool enable);
     void updateFps();
@@ -61,9 +56,16 @@ private:
 
 private:
     JavaVM *vm = nullptr;
+    JNIEnv *env = nullptr;
     jweak obj = nullptr;
 
     ANativeWindow *window = nullptr;
+
+    EGLDisplay oldDisplay = EGL_NO_DISPLAY;
+    EGLSurface oldReadSurface = EGL_NO_SURFACE;
+    EGLSurface oldDrawSurface = EGL_NO_SURFACE;
+    EGLContext oldContext = EGL_NO_CONTEXT;
+
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
     EGLContext context = EGL_NO_CONTEXT;
@@ -88,9 +90,6 @@ private:
     int availableProcessors = 0;
     size_t totalMemory = 0;
 
-    jboolean renderDetach = false;
-    JNIEnv *renderEnv = nullptr;
-
     // Ensure these are initialised last
     std::unique_ptr<mbgl::DefaultFileSource> fileSource;
     std::unique_ptr<mbgl::Map> map;
@@ -98,5 +97,3 @@ private:
 };
 }
 }
-
-#endif
